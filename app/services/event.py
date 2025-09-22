@@ -8,7 +8,9 @@ from models import (
     MatchSchedule,
     TeamEvent,
     TeamRecord,
-    FRCEvent
+    FRCEvent,
+    Organization,
+    OrganizationEvent,
 )
 
 class MatchScheduleResponse(SQLModel):
@@ -86,3 +88,16 @@ async def get_event_list_or_404(session: AsyncSession, year: int) -> List[EventR
         year=ev.year,
         week=ev.week
     ) for ev in result.scalars().all()]
+
+
+async def get_public_organizations_for_event(session: AsyncSession, eventCode: str) -> List[Organization]:
+    statement = (
+        select(Organization)
+        .join(OrganizationEvent, OrganizationEvent.organization_id == Organization.id)
+        .where(
+            OrganizationEvent.event_key == eventCode,
+            OrganizationEvent.public_data.is_(True),
+        )
+    )
+    result = await session.execute(statement)
+    return result.unique().scalars().all()

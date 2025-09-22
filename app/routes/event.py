@@ -4,6 +4,8 @@ from auth.dependencies import get_current_user
 from db.database import get_session
 from typing import List
 
+from models import Organization
+
 router = APIRouter(
     prefix="/event",
     tags=["Event"],
@@ -26,3 +28,8 @@ async def get_team_list(eventCode, session: AsyncSession = Depends(get_session))
 @router.get("s/{year}")
 async def get_event_list(year: int, session: AsyncSession = Depends(get_session)) -> List[EventResponse]:
     return await get_event_list_or_404(session, year)
+
+
+@router.get("s/{eventCode}/organizations")
+async def get_event_organizations(eventCode: str, session: AsyncSession = Depends(get_session)) -> List[Organization]:
+    return await get_public_organizations_for_event(session, eventCode)

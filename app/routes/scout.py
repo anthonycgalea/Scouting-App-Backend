@@ -1,0 +1,73 @@
+from fastapi import APIRouter, Depends
+from sqlmodel.ext.asyncio.session import AsyncSession
+from auth.dependencies import get_current_user
+from db.database import get_session
+from typing import List
+
+router = APIRouter(
+    prefix="/scout",
+    tags=["Scout"],
+)
+
+from services.scout import *
+
+@router.get("/matches/{eventCode}")
+async def get_scouted_matches(
+    eventCode: str,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
+):
+    return await get_already_scouted_matches(session, eventCode, user)
+
+@router.get("/matches/{eventCode}/match/{matchLevel}/{matchNumber}")
+async def get_scouted_match(
+    eventCode: str,
+    matchLevel: str,
+    matchNumber: int,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
+):
+    return await get_already_scouted_match(session, eventCode, matchLevel, matchNumber, user)
+
+@router.get("/matches/{eventCode}/match/{matchLevel}/{matchNumber}/{teamNumber}")
+async def get_scouted_team_match(
+    eventCode: str,
+    matchLevel: str,
+    matchNumber: int,
+    teamNumber: int,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
+):
+    return await get_already_scouted_match(session, eventCode, matchLevel, matchNumber, user, teamNumber)
+
+@router.post("/submit/batch")
+async def submit_multiple_matches(
+    matches: List[MatchData],
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
+):
+    return await batch_submit_match(session, matches, user)
+
+@router.post("/submit")
+async def submit_single_match(
+    match: MatchData,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
+):
+    return await submit_scouted_match(session, match, user)
+
+@router.put("/edit/batch")
+async def edit_multiple_matches(
+    matches: List[MatchData],
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
+):
+    return await batch_update_match(session, matches, user)
+
+@router.put("/edit")
+async def edit_single_match(
+    match: MatchData,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
+):
+    return await submit_scouted_match(session, match, user)

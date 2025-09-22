@@ -21,6 +21,10 @@ async def get_single_match(eventCode, matchNumber, matchLevel, session: AsyncSes
 async def get_match_schedule(eventCode, session: AsyncSession = Depends(get_session)) -> List[MatchScheduleResponse]:
     return await get_match_schedule_or_404(session, eventCode)
 
+@router.get("/{eventCode}/organizations")
+async def get_event_organizations(eventCode: str, session: AsyncSession = Depends(get_session)) -> List[Organization]:
+    return await get_public_organizations_for_event(session, eventCode)
+
 @router.get("/{eventCode}/teams")
 async def get_team_list(eventCode, session: AsyncSession = Depends(get_session)) -> List[TeamRecordResponse]:
     return await get_team_list_or_404(session, eventCode)
@@ -28,8 +32,3 @@ async def get_team_list(eventCode, session: AsyncSession = Depends(get_session))
 @router.get("s/{year}")
 async def get_event_list(year: int, session: AsyncSession = Depends(get_session)) -> List[EventResponse]:
     return await get_event_list_or_404(session, year)
-
-
-@router.get("s/{eventCode}/organizations")
-async def get_event_organizations(eventCode: str, session: AsyncSession = Depends(get_session)) -> List[Organization]:
-    return await get_public_organizations_for_event(session, eventCode)

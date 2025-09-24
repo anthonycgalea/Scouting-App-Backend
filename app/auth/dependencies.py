@@ -47,7 +47,9 @@ async def get_current_user(
                 id=user_id,
                 email=email,
                 auth_provider="discord",
-                display_name=display_name
+                display_name=display_name,
+                created_at=datetime.now(),
+                updated_at=datetime.now()
             )
             session.add(db_user)
             await session.commit()

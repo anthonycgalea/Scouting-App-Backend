@@ -32,6 +32,7 @@ class CreateOrgEventCommand(SQLModel):
 
 class OrganizationEventDetail(SQLModel):
     eventKey: str
+    shortName: str
     eventName: str
     isPublic: bool
     isActive: bool
@@ -133,6 +134,7 @@ async def get_organization_events(
             isPublic=organization_event.public_data,
             isActive=organization_event.active,
             eventName=frc_event.event_name,
+            shortName=frc_event.short_name,
             eventKey=frc_event.event_key,
         )
         for organization_event, frc_event in events

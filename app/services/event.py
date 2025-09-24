@@ -101,3 +101,13 @@ async def get_public_organizations_for_event(session: AsyncSession, eventCode: s
     )
     result = await session.execute(statement)
     return result.unique().scalars().all()
+
+async def get_event_or_404(session: AsyncSession, eventCode: str) -> FRCEvent:
+    statement = select(FRCEvent).where(
+        FRCEvent.event_key == eventCode
+    )
+    result = await session.execute(statement)
+    event = result.scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return event

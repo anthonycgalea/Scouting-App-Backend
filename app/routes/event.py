@@ -4,7 +4,7 @@ from auth.dependencies import get_current_user
 from db.database import get_session
 from typing import List
 
-from models import Organization
+from models import Organization, FRCEvent
 
 router = APIRouter(
     prefix="/event",
@@ -28,6 +28,10 @@ async def get_event_organizations(eventCode: str, session: AsyncSession = Depend
 @router.get("/{eventCode}/teams")
 async def get_team_list(eventCode, session: AsyncSession = Depends(get_session)) -> List[TeamRecordResponse]:
     return await get_team_list_or_404(session, eventCode)
+
+@router.get("/{eventCode}/info")
+async def get_event_info(eventCode: str, session: AsyncSession = Depends(get_session)) -> FRCEvent:
+    return await get_event_or_404(session, eventCode)
 
 @router.get("s/{year}")
 async def get_event_list(year: int, session: AsyncSession = Depends(get_session)) -> List[EventResponse]:

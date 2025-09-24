@@ -54,7 +54,7 @@ async def get_current_user(
             await session.refresh(db_user)
 
         return {
-            "disaplyName": display_name,
+            "displayName": display_name,
             "email": email
         }
 

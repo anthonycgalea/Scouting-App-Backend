@@ -46,6 +46,7 @@ async def get_current_user(
             db_user = User(
                 id=user_id,
                 email=email,
+                auth_provider="discord",
                 display_name=display_name
             )
             session.add(db_user)

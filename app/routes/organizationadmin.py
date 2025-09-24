@@ -1,4 +1,3 @@
-from http.client import HTTPException
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select, delete, SQLModel
@@ -6,6 +5,7 @@ from auth.dependencies import get_current_user
 from db.database import get_session
 from dotenv import load_dotenv
 import os, httpx
+from typing import List
 
 
 load_dotenv()
@@ -28,6 +28,13 @@ from models import (
 class CreateOrgEventCommand(SQLModel):
     OrganizationId: int
     EventKey: str
+
+
+class OrganizationEventDetail(SQLModel):
+    eventKey: str
+    eventName: str
+    isPublic: bool
+    isActive: bool
 
 @router.post("/createEvent", response_model=OrganizationEvent)
 async def createOrganizationEvent(
@@ -105,3 +112,28 @@ async def get_match_schedule(event_key: str, session: AsyncSession = Depends(get
     # 4. Commit all new matches
     await session.commit()
     return {"status": "success", "event": event_key, "matches_inserted": len(match_schedule_json)}
+
+
+@router.get("/{organization_id}/events", response_model=List[OrganizationEventDetail])
+async def get_organization_events(
+    organization_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> List[OrganizationEventDetail]:
+    statement = (
+        select(OrganizationEvent, FRCEvent)
+        .join(FRCEvent, OrganizationEvent.event_key == FRCEvent.event_key)
+        .where(OrganizationEvent.organization_id == organization_id)
+    )
+    result = await session.exec(statement)
+    events = result.all()
+    if not events:
+        raise HTTPException(status_code=404, detail="No events found for this organization")
+    return [
+        OrganizationEventDetail(
+            isPublic=organization_event.public_data,
+            isActive=organization_event.active,
+            eventName=frc_event.event_name,
+            eventKey=frc_event.event_key,
+        )
+        for organization_event, frc_event in events
+    ]

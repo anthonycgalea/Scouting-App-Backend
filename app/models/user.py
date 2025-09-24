@@ -8,6 +8,7 @@ class User(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     email: str
+    auth_provider: str
     display_name: str
     created_at: datetime
     updated_at: datetime = None

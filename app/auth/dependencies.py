@@ -54,9 +54,8 @@ async def get_current_user(
             await session.refresh(db_user)
 
         return {
-            "id": user_id,
-            "email": email,
-            "role": payload.get("role"),
+            "disaplyName": display_name,
+            "email": email
         }
 
     except JWTError as e:

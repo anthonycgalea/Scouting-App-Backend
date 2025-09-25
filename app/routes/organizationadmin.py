@@ -144,6 +144,7 @@ async def get_organization_events(
             eventName=frc_event.event_name,
             shortName=frc_event.short_name,
             eventKey=frc_event.event_key,
+            week=frc_event.week
         )
         for organization_event, frc_event in events
     ]

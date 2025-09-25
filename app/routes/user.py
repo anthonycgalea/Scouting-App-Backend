@@ -118,7 +118,7 @@ async def get_my_role(
 
     membership_statement = select(UserOrganization).where(
         UserOrganization.user_id == user_id,
-        UserOrganization.organization_id == organization_id,
+        UserOrganization.id == organization_id,
     )
     membership_result = await session.exec(membership_statement)
     membership = membership_result.first()

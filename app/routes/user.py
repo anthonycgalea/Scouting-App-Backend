@@ -55,6 +55,7 @@ async def get_my_organizations(
         select(Organization, UserOrganization)
         .join(UserOrganization, UserOrganization.organization_id == Organization.id)
         .where(UserOrganization.user_id == user_id)
+        .where(UserOrganization.role != "PENDING")
     )
     result = await session.exec(statement)
     memberships = []

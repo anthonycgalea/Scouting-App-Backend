@@ -66,15 +66,6 @@ async def create_organization(
         team_number=newOrg.team_number
     )
 
-@router.get("/organizations")
-async def get_all_organizations(session: AsyncSession = Depends(get_session)) -> List[OrganizationResponse]:
-    statement = select(Organization)
-    result = await session.execute(statement)
-    organizations = result.scalars().all()  # <-- returns list of Organizations
-    if not organizations:
-        raise HTTPException(status_code=404, detail="No organizations found for this event")
-    return [OrganizationResponse(id=o.id, name=o.name, team_number=o.team_number) for o in organizations]
-
 @router.post("/teams/update")
 async def update_team_list(session: AsyncSession = Depends(get_session)) -> dict:
     pagenum = 0

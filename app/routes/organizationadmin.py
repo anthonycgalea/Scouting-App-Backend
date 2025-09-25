@@ -6,6 +6,7 @@ from db.database import get_session
 from dotenv import load_dotenv
 import os, httpx
 from typing import List
+from uuid import UUID
 
 
 load_dotenv()
@@ -22,7 +23,8 @@ from models import (
     Organization,
     OrganizationEvent,
     FRCEvent,
-    MatchSchedule
+    MatchSchedule,
+    UserOrganization,
 )
 
 class CreateOrgEventCommand(SQLModel):
@@ -34,6 +36,12 @@ class OrganizationEventDetail(SQLModel):
     eventKey: str
     shortName: str
     eventName: str
+    isPublic: bool
+    isActive: bool
+
+
+class UpdateOrganizationEventRequest(SQLModel):
+    eventKey: str
     isPublic: bool
     isActive: bool
 
@@ -139,3 +147,72 @@ async def get_organization_events(
         )
         for organization_event, frc_event in events
     ]
+
+
+@router.patch("/events")
+async def update_organization_events(
+    updates: List[UpdateOrganizationEventRequest],
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    if not updates:
+        raise HTTPException(status_code=400, detail="No event updates provided")
+
+    active_updates = sum(1 for update in updates if update.isActive)
+    if active_updates != 1:
+        raise HTTPException(status_code=400, detail="Exactly one event must be active")
+
+    user_id = user.get("id")
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="User not authenticated")
+
+    if isinstance(user_id, str):
+        try:
+            user_id = UUID(user_id)
+        except ValueError as exc:  # pragma: no cover - defensive programming
+            raise HTTPException(status_code=400, detail="Invalid user identifier") from exc
+
+    membership_id = user.get("user_org")
+    if membership_id is None:
+        raise HTTPException(status_code=404, detail="User is not logged into an organization")
+
+    membership = await session.get(UserOrganization, membership_id)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Organization membership not found")
+
+    if membership.user_id != user_id:
+        raise HTTPException(status_code=403, detail="User does not belong to this organization")
+
+    statement = select(OrganizationEvent).where(
+        OrganizationEvent.organization_id == membership.organization_id
+    )
+    result = await session.exec(statement)
+    organization_events = result.all()
+
+    if not organization_events:
+        raise HTTPException(status_code=404, detail="No events found for this organization")
+
+    update_map = {}
+    for update in updates:
+        if update.eventKey in update_map:
+            raise HTTPException(status_code=400, detail="Duplicate event keys provided")
+        update_map[update.eventKey] = update
+
+    if len(update_map) != len(organization_events):
+        raise HTTPException(
+            status_code=400,
+            detail="Updates must be provided for every organization event",
+        )
+
+    for organization_event in organization_events:
+        event_update = update_map.get(organization_event.event_key)
+        if event_update is None:
+            raise HTTPException(status_code=400, detail="Unknown event key provided")
+
+        organization_event.public_data = event_update.isPublic
+        organization_event.active = event_update.isActive
+        session.add(organization_event)
+
+    await session.commit()
+
+    return {"status": "success"}

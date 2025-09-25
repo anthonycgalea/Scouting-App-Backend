@@ -10,5 +10,6 @@ class User(SQLModel, table=True):
     email: str
     auth_provider: str
     display_name: str
+    logged_in_user_org: int = Field(default=None, nullable=True)
     created_at: datetime
     updated_at: datetime = None

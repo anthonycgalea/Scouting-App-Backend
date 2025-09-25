@@ -36,6 +36,7 @@ class OrganizationEventDetail(SQLModel):
     eventKey: str
     shortName: str
     eventName: str
+    week: int
     isPublic: bool
     isActive: bool
 

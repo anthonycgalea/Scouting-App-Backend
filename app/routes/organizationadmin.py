@@ -58,6 +58,13 @@ class OrganizationApplication(SQLModel):
     joined: datetime
 
 
+class OrganizationMember(SQLModel):
+    userId: UUID
+    displayName: str
+    email: str
+    role: UserRole
+
+
 class OrganizationMemberChange(SQLModel):
     userId: UUID
     role: UserRole
@@ -120,6 +127,61 @@ async def get_pending_applications(
             joined=organization_membership.joined,
         )
         for organization_membership, user_record in pending_members
+    ]
+
+
+@router.get("/members", response_model=List[OrganizationMember])
+async def get_organization_members(
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> List[OrganizationMember]:
+    user_id = user.get("id")
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="User not authenticated")
+
+    membership_id = user.get("user_org")
+    if membership_id is None:
+        raise HTTPException(
+            status_code=404, detail="User is not logged into an organization"
+        )
+
+    if isinstance(user_id, str):
+        try:
+            user_id = UUID(user_id)
+        except ValueError as exc:  # pragma: no cover - defensive programming
+            raise HTTPException(status_code=400, detail="Invalid user identifier") from exc
+
+    membership = await session.get(UserOrganization, membership_id)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Organization membership not found")
+
+    if membership.user_id != user_id:
+        raise HTTPException(status_code=403, detail="User does not belong to this organization")
+
+    if membership.role not in {UserRole.ADMIN, UserRole.LEAD}:
+        raise HTTPException(
+            status_code=403,
+            detail="Only organization admins or leads can access organization members",
+        )
+
+    statement = (
+        select(UserOrganization, User)
+        .join(User, UserOrganization.user_id == User.id)
+        .where(UserOrganization.organization_id == membership.organization_id)
+        .where(UserOrganization.role != UserRole.PENDING)
+    )
+
+    result = await session.exec(statement)
+    organization_members = result.all()
+
+    return [
+        OrganizationMember(
+            userId=user_record.id,
+            displayName=user_record.display_name,
+            email=user_record.email,
+            role=organization_membership.role,
+        )
+        for organization_membership, user_record in organization_members
     ]
 
 

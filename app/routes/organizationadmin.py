@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select, SQLModel
 from datetime import datetime
@@ -63,6 +63,10 @@ class OrganizationMemberChange(SQLModel):
     role: UserRole
 
 
+class OrganizationApplicationDeleteRequest(SQLModel):
+    userId: UUID
+
+
 @router.get("/applications", response_model=List[OrganizationApplication])
 async def get_pending_applications(
     user=Depends(get_current_user),
@@ -117,6 +121,62 @@ async def get_pending_applications(
         )
         for organization_membership, user_record in pending_members
     ]
+
+
+@router.delete("/applications", status_code=204)
+async def delete_pending_application(
+    request: OrganizationApplicationDeleteRequest,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    user_id = user.get("id")
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="User not authenticated")
+
+    membership_id = user.get("user_org")
+    if membership_id is None:
+        raise HTTPException(
+            status_code=404, detail="User is not logged into an organization"
+        )
+
+    if isinstance(user_id, str):
+        try:
+            user_id = UUID(user_id)
+        except ValueError as exc:  # pragma: no cover - defensive programming
+            raise HTTPException(status_code=400, detail="Invalid user identifier") from exc
+
+    membership = await session.get(UserOrganization, membership_id)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Organization membership not found")
+
+    if membership.user_id != user_id:
+        raise HTTPException(status_code=403, detail="User does not belong to this organization")
+
+    if membership.role not in {UserRole.ADMIN, UserRole.LEAD}:
+        raise HTTPException(
+            status_code=403,
+            detail="Only organization admins or leads can manage organization applications",
+        )
+
+    statement = (
+        select(UserOrganization)
+        .where(UserOrganization.organization_id == membership.organization_id)
+        .where(UserOrganization.user_id == request.userId)
+    )
+
+    result = await session.exec(statement)
+    pending_membership = result.first()
+
+    if pending_membership is None:
+        raise HTTPException(status_code=404, detail="Requested user is not part of this organization")
+
+    if pending_membership.role != UserRole.PENDING:
+        raise HTTPException(status_code=400, detail="Only pending applications can be removed")
+
+    await session.delete(pending_membership)
+    await session.commit()
+
+    return Response(status_code=204)
 
 @router.post("/createEvent", response_model=OrganizationEvent)
 async def createOrganizationEvent(

@@ -7,7 +7,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from auth.dependencies import get_current_user
 from db.database import get_session
-from models import Organization, UserOrganization
+from models import Organization, UserOrganization, User
 from models.user_organization import UserRole
 
 router = APIRouter()
@@ -29,6 +29,14 @@ class OrganizationResponse(SQLModel):
 
 class OrganizationApplicationRequest(SQLModel):
     organization_id: int
+
+
+class UpdateUserOrganizationRequest(SQLModel):
+    user_organization_id: int
+
+
+class UpdateUserOrganizationResponse(SQLModel):
+    user_organization_id: int
 
 
 @router.get("/user/info")
@@ -139,3 +147,41 @@ async def apply_to_organization(
         role=membership.role,
         user_organization_id=membership.id,
     )
+
+
+@router.patch(
+    "/user/organization",
+    response_model=UpdateUserOrganizationResponse,
+)
+async def update_user_logged_in_organization(
+    update: UpdateUserOrganizationRequest,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> UpdateUserOrganizationResponse:
+    user_id = user.get("id")
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="User not authenticated")
+
+    if isinstance(user_id, str):
+        try:
+            user_id = UUID(user_id)
+        except ValueError as exc:  # pragma: no cover - defensive programming
+            raise HTTPException(status_code=400, detail="Invalid user identifier") from exc
+
+    membership = await session.get(UserOrganization, update.user_organization_id)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="User organization membership not found")
+
+    if membership.user_id != user_id:
+        raise HTTPException(status_code=403, detail="User does not belong to this organization")
+
+    db_user = await session.get(User, user_id)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    db_user.logged_in_user_org = update.user_organization_id
+    session.add(db_user)
+    await session.commit()
+    await session.refresh(db_user)
+
+    return UpdateUserOrganizationResponse(user_organization_id=db_user.logged_in_user_org)

@@ -269,8 +269,54 @@ async def createOrganizationEvent(
 
     return newOrgEvent
 
-@router.post("/event/{event_key}/matches/sync")
-async def get_match_schedule(event_key: str, session: AsyncSession = Depends(get_session)):
+@router.post("/event/matches/sync")
+async def get_match_schedule(
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    user_id = user.get("id")
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="User not authenticated")
+
+    membership_id = user.get("user_org")
+    if membership_id is None:
+        raise HTTPException(
+            status_code=404, detail="User is not logged into an organization"
+        )
+
+    if isinstance(user_id, str):
+        try:
+            user_id = UUID(user_id)
+        except ValueError as exc:  # pragma: no cover - defensive programming
+            raise HTTPException(status_code=400, detail="Invalid user identifier") from exc
+
+    membership = await session.get(UserOrganization, membership_id)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Organization membership not found")
+
+    if membership.user_id != user_id:
+        raise HTTPException(status_code=403, detail="User does not belong to this organization")
+
+    if membership.role not in {UserRole.ADMIN, UserRole.LEAD}:
+        raise HTTPException(
+            status_code=403,
+            detail="Only organization admins or leads can sync matches",
+        )
+
+    statement = select(OrganizationEvent).where(
+        OrganizationEvent.organization_id == membership.organization_id,
+        OrganizationEvent.active == True,  # noqa: E712 - SQLAlchemy boolean comparison
+    )
+    result = await session.execute(statement)
+    active_event = result.scalar_one_or_none()
+
+    if active_event is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No active event configured for this organization",
+        )
+
+    event_key = active_event.event_key
 
     # 1. Delete existing matches for the event
     statement = select(MatchSchedule).where(MatchSchedule.event_key == event_key)
@@ -283,7 +329,9 @@ async def get_match_schedule(event_key: str, session: AsyncSession = Depends(get
     # 2. Fetch match schedule from TBA
     headers = {"X-TBA-Auth-Key": TBA_API_KEY, "accept": "application/json"}
     async with httpx.AsyncClient() as client:
-        response = await client.get(MATCH_SCHEDULE_URL.format(event_key=event_key), headers=headers)
+        response = await client.get(
+            MATCH_SCHEDULE_URL.format(event_key=event_key), headers=headers
+        )
         match_schedule_json = response.json()
 
     # 3. Insert matches into DB
@@ -313,7 +361,7 @@ async def get_match_schedule(event_key: str, session: AsyncSession = Depends(get
             red3_id=red3,
             blue1_id=blue1,
             blue2_id=blue2,
-            blue3_id=blue3
+            blue3_id=blue3,
         )
         session.add(match_record)
 

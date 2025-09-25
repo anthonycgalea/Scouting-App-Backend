@@ -57,6 +57,11 @@ class OrganizationApplication(SQLModel):
     joined: datetime
 
 
+class OrganizationMemberChange(SQLModel):
+    userId: UUID
+    role: UserRole
+
+
 @router.get("/applications", response_model=List[OrganizationApplication])
 async def get_pending_applications(
     user=Depends(get_current_user),
@@ -283,3 +288,67 @@ async def update_organization_events(
     await session.commit()
 
     return {"status": "success"}
+
+
+@router.patch("/members")
+async def update_organization_member(
+    change: OrganizationMemberChange,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    user_id = user.get("id")
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="User not authenticated")
+
+    if isinstance(user_id, str):
+        try:
+            user_id = UUID(user_id)
+        except ValueError as exc:  # pragma: no cover - defensive programming
+            raise HTTPException(status_code=400, detail="Invalid user identifier") from exc
+
+    membership_id = user.get("user_org")
+    if membership_id is None:
+        raise HTTPException(status_code=404, detail="User is not logged into an organization")
+
+    membership = await session.get(UserOrganization, membership_id)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Organization membership not found")
+
+    if membership.user_id != user_id:
+        raise HTTPException(status_code=403, detail="User does not belong to this organization")
+
+    if membership.role not in {UserRole.ADMIN, UserRole.LEAD}:
+        raise HTTPException(
+            status_code=403,
+            detail="Only organization admins or leads can manage members",
+        )
+
+    if change.role in {UserRole.ADMIN, UserRole.LEAD} and membership.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail="Only organization admins can assign admin or lead roles",
+        )
+
+    target_user_id = change.userId
+    if isinstance(target_user_id, str):
+        try:
+            target_user_id = UUID(target_user_id)
+        except ValueError as exc:  # pragma: no cover - defensive programming
+            raise HTTPException(status_code=400, detail="Invalid member identifier") from exc
+
+    statement = select(UserOrganization).where(
+        UserOrganization.user_id == target_user_id,
+        UserOrganization.organization_id == membership.organization_id,
+    )
+    result = await session.exec(statement)
+    target_membership = result.first()
+
+    if target_membership is None:
+        raise HTTPException(status_code=404, detail="Organization membership not found for user")
+
+    target_membership.role = change.role
+    session.add(target_membership)
+    await session.commit()
+    await session.refresh(target_membership)
+
+    return {"status": "success", "userId": str(target_membership.user_id), "role": target_membership.role}

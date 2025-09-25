@@ -130,7 +130,44 @@ async def get_my_role(
         "role": membership.role.value
     }
 
+@router.get("/user/organization")
+async def get_current_organization(
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    user_id = user.get("id")
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="User not authenticated")
 
+    organization_id = user.get("user_org")
+    if organization_id is None:
+        raise HTTPException(
+            status_code=404, detail="User is not logged into an organization"
+        )
+
+    if isinstance(user_id, str):
+        user_id = UUID(user_id)
+
+    membership_statement = select(UserOrganization).where(
+        UserOrganization.user_id == user_id,
+        UserOrganization.id == organization_id,
+    )
+    membership_result = await session.exec(membership_statement)
+    membership = membership_result.first()
+
+    organization_statement = select(Organization).wher(
+        Organization.id == membership.organization_id
+    )
+    organization_result = await session.exec(organization_statement)
+    organization: Organization = organization_result.first()
+
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Membership not found")
+
+    return {
+        "organization_id": organization.id,
+        "organization_name": organization.name
+    }
 
 
 

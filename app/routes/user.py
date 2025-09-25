@@ -155,7 +155,7 @@ async def get_current_organization(
     membership_result = await session.exec(membership_statement)
     membership = membership_result.first()
 
-    organization_statement = select(Organization).wher(
+    organization_statement = select(Organization).where(
         Organization.id == membership.organization_id
     )
     organization_result = await session.exec(organization_statement)

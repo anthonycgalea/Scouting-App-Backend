@@ -11,6 +11,6 @@ from .organization import Organization
 from .robot_event_image_link import RobotEventImageLink
 from .tba_match_data_2025 import TBAMatchData2025
 from .team_at_event import TeamEvent
-from .user_organization import UserOrganization
+from .user_organization import UserOrganization, UserRole
 from .user import User
 from .frc_season import Season

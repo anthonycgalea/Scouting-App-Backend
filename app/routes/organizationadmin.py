@@ -51,6 +51,7 @@ class UpdateOrganizationEventRequest(SQLModel):
 
 
 class OrganizationApplication(SQLModel):
+    userId: UUID
     displayName: str
     email: str
     role: UserRole
@@ -108,6 +109,7 @@ async def get_pending_applications(
 
     return [
         OrganizationApplication(
+            userId=user_record.id,
             displayName=user_record.display_name,
             email=user_record.email,
             role=organization_membership.role,

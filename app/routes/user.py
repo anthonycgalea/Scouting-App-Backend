@@ -18,6 +18,7 @@ class OrganizationMembershipResponse(SQLModel):
     name: str
     team_number: Optional[int] = None
     role: UserRole
+    user_organization_id: int
 
 
 @router.get("/user/info")
@@ -41,19 +42,20 @@ async def get_my_organizations(
         user_id = UUID(user_id)
 
     statement = (
-        select(Organization, UserOrganization.role)
+        select(Organization, UserOrganization)
         .join(UserOrganization, UserOrganization.organization_id == Organization.id)
         .where(UserOrganization.user_id == user_id)
     )
     result = await session.exec(statement)
     memberships = []
-    for organization, role in result.all():
+    for organization, membership in result.all():
         memberships.append(
             OrganizationMembershipResponse(
                 id=organization.id,
                 name=organization.name,
                 team_number=organization.team_number,
-                role=role,
+                role=membership.role,
+                user_organization_id=membership.id,
             )
         )
     return memberships

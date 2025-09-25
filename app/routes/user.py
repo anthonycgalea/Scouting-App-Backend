@@ -1,7 +1,7 @@
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -19,6 +19,12 @@ class OrganizationMembershipResponse(SQLModel):
     team_number: Optional[int] = None
     role: UserRole
     user_organization_id: int
+
+
+class OrganizationResponse(SQLModel):
+    id: int
+    name: str
+    team_number: Optional[int] = None
 
 
 @router.get("/user/info")
@@ -59,3 +65,22 @@ async def get_my_organizations(
             )
         )
     return memberships
+
+
+@router.get(
+    "/organizations",
+    response_model=List[OrganizationResponse],
+    tags=["Organization"],
+)
+async def get_all_organizations(
+    session: AsyncSession = Depends(get_session),
+) -> List[OrganizationResponse]:
+    statement = select(Organization)
+    result = await session.execute(statement)
+    organizations = result.scalars().all()
+    if not organizations:
+        raise HTTPException(status_code=404, detail="No organizations found for this event")
+    return [
+        OrganizationResponse(id=o.id, name=o.name, team_number=o.team_number)
+        for o in organizations
+    ]

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlmodel import select, delete, SQLModel
+from sqlmodel import select, SQLModel
+from datetime import datetime
 from auth.dependencies import get_current_user
 from db.database import get_session
 from dotenv import load_dotenv
@@ -24,8 +25,10 @@ from models import (
     OrganizationEvent,
     FRCEvent,
     MatchSchedule,
+    User,
     UserOrganization,
 )
+from models.user_organization import UserRole
 
 class CreateOrgEventCommand(SQLModel):
     OrganizationId: int
@@ -45,6 +48,68 @@ class UpdateOrganizationEventRequest(SQLModel):
     eventKey: str
     isPublic: bool
     isActive: bool
+
+
+class OrganizationApplication(SQLModel):
+    displayName: str
+    email: str
+    role: UserRole
+    joined: datetime
+
+
+@router.get("/applications", response_model=List[OrganizationApplication])
+async def get_pending_applications(
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> List[OrganizationApplication]:
+    user_id = user.get("id")
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="User not authenticated")
+
+    membership_id = user.get("user_org")
+    if membership_id is None:
+        raise HTTPException(
+            status_code=404, detail="User is not logged into an organization"
+        )
+
+    if isinstance(user_id, str):
+        try:
+            user_id = UUID(user_id)
+        except ValueError as exc:  # pragma: no cover - defensive programming
+            raise HTTPException(status_code=400, detail="Invalid user identifier") from exc
+
+    membership = await session.get(UserOrganization, membership_id)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Organization membership not found")
+
+    if membership.user_id != user_id:
+        raise HTTPException(status_code=403, detail="User does not belong to this organization")
+
+    if membership.role not in {UserRole.ADMIN, UserRole.LEAD}:
+        raise HTTPException(
+            status_code=403,
+            detail="Only organization admins or leads can access organization applications",
+        )
+
+    statement = (
+        select(UserOrganization, User)
+        .join(User, UserOrganization.user_id == User.id)
+        .where(UserOrganization.organization_id == membership.organization_id)
+        .where(UserOrganization.role == UserRole.PENDING)
+    )
+
+    result = await session.exec(statement)
+    pending_members = result.all()
+
+    return [
+        OrganizationApplication(
+            displayName=user_record.display_name,
+            email=user_record.email,
+            role=organization_membership.role,
+            joined=organization_membership.joined,
+        )
+        for organization_membership, user_record in pending_members
+    ]
 
 @router.post("/createEvent", response_model=OrganizationEvent)
 async def createOrganizationEvent(

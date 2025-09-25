@@ -102,7 +102,7 @@ async def get_all_organizations(
 async def get_my_role(
     user=Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-) -> str:
+):
     user_id = user.get("id")
     if user_id is None:
         raise HTTPException(status_code=401, detail="User not authenticated")
@@ -126,7 +126,9 @@ async def get_my_role(
     if membership is None:
         raise HTTPException(status_code=404, detail="Membership not found")
 
-    return membership.role.value
+    return {
+        "role": membership.role.value
+    }
 
 
 

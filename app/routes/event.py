@@ -13,25 +13,51 @@ router = APIRouter(
 
 from services.event import *
 
-@router.get("/{eventCode}/match/{matchLevel}/{matchNumber}", tags=["Scout"])
-async def get_single_match(eventCode, matchNumber, matchLevel, session: AsyncSession = Depends(get_session)) -> MatchScheduleResponse:
-    return await get_match_or_404(session, eventCode, matchNumber, matchLevel)
+@router.get("/match/{matchLevel}/{matchNumber}", tags=["Scout"])
+async def get_single_match(
+    matchNumber: int,
+    matchLevel: str,
+    session: AsyncSession = Depends(get_session),
+    user=Depends(get_current_user),
+) -> MatchScheduleResponse:
+    event_code = await get_active_event_key_for_user(session, user)
+    return await get_match_or_404(session, event_code, matchNumber, matchLevel)
 
-@router.get("/{eventCode}/matches")
-async def get_match_schedule(eventCode, session: AsyncSession = Depends(get_session)) -> List[MatchScheduleResponse]:
-    return await get_match_schedule_or_404(session, eventCode)
 
-@router.get("/{eventCode}/organizations")
-async def get_event_organizations(eventCode: str, session: AsyncSession = Depends(get_session)) -> List[Organization]:
-    return await get_public_organizations_for_event(session, eventCode)
+@router.get("/matches")
+async def get_match_schedule(
+    session: AsyncSession = Depends(get_session),
+    user=Depends(get_current_user),
+) -> List[MatchScheduleResponse]:
+    event_code = await get_active_event_key_for_user(session, user)
+    return await get_match_schedule_or_404(session, event_code)
 
-@router.get("/{eventCode}/teams")
-async def get_team_list(eventCode, session: AsyncSession = Depends(get_session)) -> List[TeamRecordResponse]:
-    return await get_team_list_or_404(session, eventCode)
 
-@router.get("/{eventCode}/info")
-async def get_event_info(eventCode: str, session: AsyncSession = Depends(get_session)) -> FRCEvent:
-    return await get_event_or_404(session, eventCode)
+@router.get("/organizations")
+async def get_event_organizations(
+    session: AsyncSession = Depends(get_session),
+    user=Depends(get_current_user),
+) -> List[Organization]:
+    event_code = await get_active_event_key_for_user(session, user)
+    return await get_public_organizations_for_event(session, event_code)
+
+
+@router.get("/teams")
+async def get_team_list(
+    session: AsyncSession = Depends(get_session),
+    user=Depends(get_current_user),
+) -> List[TeamRecordResponse]:
+    event_code = await get_active_event_key_for_user(session, user)
+    return await get_team_list_or_404(session, event_code)
+
+
+@router.get("/info")
+async def get_event_info(
+    session: AsyncSession = Depends(get_session),
+    user=Depends(get_current_user),
+) -> FRCEvent:
+    event_code = await get_active_event_key_for_user(session, user)
+    return await get_event_or_404(session, event_code)
 
 @router.get("s/{year}")
 async def get_event_list(year: int, session: AsyncSession = Depends(get_session)) -> List[EventResponse]:

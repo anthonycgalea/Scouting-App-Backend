@@ -11,6 +11,8 @@ from models import (
     FRCEvent,
     Organization,
     OrganizationEvent,
+    UserOrganization,
+    UserRole,
 )
 
 class MatchScheduleResponse(SQLModel):
@@ -111,3 +113,46 @@ async def get_event_or_404(session: AsyncSession, eventCode: str) -> FRCEvent:
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     return event
+
+
+async def get_active_event_key_for_user(
+    session: AsyncSession,
+    user: dict,
+) -> str:
+    user_id = user.get("id")
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="User not authenticated")
+
+    if isinstance(user_id, str):
+        try:
+            user_id = UUID(user_id)
+        except ValueError as exc:  # pragma: no cover - defensive programming
+            raise HTTPException(status_code=400, detail="Invalid user identifier") from exc
+
+    membership_id = user.get("user_org")
+    if membership_id is None:
+        raise HTTPException(status_code=404, detail="User is not logged into an organization")
+
+    membership = await session.get(UserOrganization, membership_id)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Organization membership not found")
+
+    if membership.user_id != user_id:
+        raise HTTPException(status_code=403, detail="User does not belong to this organization")
+
+    statement = select(OrganizationEvent).where(
+        OrganizationEvent.organization_id == membership.organization_id,
+        OrganizationEvent.active == True,  # noqa: E712 - SQLAlchemy boolean comparison
+    )
+    result = await session.execute(statement)
+    active_event = result.scalar_one_or_none()
+
+    if active_event is None:
+        if membership.role == UserRole.GUEST and membership.event_key:
+            return membership.event_key
+        raise HTTPException(
+            status_code=404,
+            detail="No active event configured for this organization",
+        )
+
+    return active_event.event_key

@@ -59,6 +59,7 @@ async def get_current_user(
             "id": str(db_user.id),
             "displayName": db_user.display_name,
             "email": db_user.email,
+            "user_org": db_user.logged_in_user_org
         }
 
     except JWTError as e:

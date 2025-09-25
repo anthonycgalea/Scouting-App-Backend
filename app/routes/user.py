@@ -136,14 +136,12 @@ async def get_my_role(
 
 @router.post(
     "/user/organization/apply",
-    response_model=OrganizationMembershipResponse,
-    status_code=status.HTTP_201_CREATED,
 )
 async def apply_to_organization(
     application: OrganizationApplicationRequest,
     user=Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-) -> OrganizationMembershipResponse:
+):
     user_id = user.get("id")
     if user_id is None:
         raise HTTPException(status_code=401, detail="User not authenticated")
@@ -175,13 +173,9 @@ async def apply_to_organization(
     await session.commit()
     await session.refresh(membership)
 
-    return OrganizationMembershipResponse(
-        id=organization.id,
-        name=organization.name,
-        team_number=organization.team_number,
-        role=membership.role,
-        user_organization_id=membership.id,
-    )
+    return {
+        "result": "Success"
+    }
 
 
 @router.patch(

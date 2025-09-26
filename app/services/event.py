@@ -1,3 +1,5 @@
+from enum import Enum
+
 from fastapi import HTTPException
 from sqlmodel import select, delete, SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -25,6 +27,16 @@ class MatchScheduleResponse(SQLModel):
     blue1_id: int
     blue2_id: int
     blue3_id: int
+
+
+class MatchExportType(str, Enum):
+    CSV = "csv"
+    JSON = "json"
+    XLS = "xls"
+
+
+class MatchExportRequest(SQLModel):
+    file_type: MatchExportType
 
 class TeamRecordResponse(SQLModel):
     team_number: int

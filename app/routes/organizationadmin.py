@@ -610,15 +610,36 @@ async def upload_match_data(
     }
 
 
-@router.get("/{organization_id}/events", response_model=List[OrganizationEventDetail])
+@router.get("/events", response_model=List[OrganizationEventDetail])
 async def get_organization_events(
-    organization_id: int,
+    user=Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> List[OrganizationEventDetail]:
+    user_id = user.get("id")
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="User not authenticated")
+
+    if isinstance(user_id, str):
+        try:
+            user_id = UUID(user_id)
+        except ValueError as exc:  # pragma: no cover - defensive programming
+            raise HTTPException(status_code=400, detail="Invalid user identifier") from exc
+
+    membership_id = user.get("user_org")
+    if membership_id is None:
+        raise HTTPException(status_code=404, detail="User is not logged into an organization")
+
+    membership = await session.get(UserOrganization, membership_id)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Organization membership not found")
+
+    if membership.user_id != user_id:
+        raise HTTPException(status_code=403, detail="User does not belong to this organization")
+
     statement = (
         select(OrganizationEvent, FRCEvent)
         .join(FRCEvent, OrganizationEvent.event_key == FRCEvent.event_key)
-        .where(OrganizationEvent.organization_id == organization_id)
+        .where(OrganizationEvent.organization_id == membership.organization_id)
     )
     result = await session.exec(statement)
     events = result.all()

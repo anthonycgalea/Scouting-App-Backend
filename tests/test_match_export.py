@@ -10,7 +10,10 @@ os.environ.setdefault("SUPABASE_JWT_SECRET", "test-secret")
 
 from app.main import app
 from app.auth.dependencies import get_current_user
+from sqlmodel import select
+
 from app.models import (
+    DataValidation,
     Endgame2025,
     FRCEvent,
     MatchData2025,
@@ -21,6 +24,7 @@ from app.models import (
     User,
     UserOrganization,
     UserRole,
+    ValidationStatus,
 )
 from tests.conftest import AsyncSessionLocal
 
@@ -183,3 +187,15 @@ def test_export_match_data_with_invalid_type(authorized_client):
     response = client.post("/organization/downloadData", json={"file_type": "txt"})
 
     assert response.status_code == 422
+
+
+def test_data_validation_created_for_match_data(prepared_match_export_data):
+    async def _fetch_data_validations():
+        async with AsyncSessionLocal() as session:
+            result = await session.exec(select(DataValidation))
+            return result.all()
+
+    records = asyncio.run(_fetch_data_validations())
+
+    assert len(records) == 2
+    assert all(record.validation_status == ValidationStatus.PENDING for record in records)

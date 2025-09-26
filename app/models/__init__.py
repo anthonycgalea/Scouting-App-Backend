@@ -2,7 +2,7 @@ from .data_validation import DataValidation
 from .frc_event import FRCEvent
 from .frc_team_record import TeamRecord
 from .match_data import MatchData
-from .match_data_2025 import MatchData2025
+from .match_data_2025 import MatchData2025, Endgame2025
 from .match_data_2026 import MatchData2026
 from .match_schedule import MatchSchedule
 from .organization_event import OrganizationEvent

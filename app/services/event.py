@@ -11,6 +11,9 @@ from models import (
     MatchSchedule,
     MatchData2025,
     MatchData2026,
+    TBAMatchData,
+    TBAMatchData2025,
+    Alliance,
     TeamEvent,
     TeamRecord,
     FRCEvent,
@@ -47,6 +50,10 @@ MATCH_DATA_MODELS_BY_YEAR = {
     2026: MatchData2026,
 }
 
+TBA_MATCH_DATA_MODELS_BY_YEAR: Dict[int, type[TBAMatchData]] = {
+    2025: TBAMatchData2025,
+}
+
 class TeamRecordResponse(SQLModel):
     team_number: int
     team_name: str
@@ -58,6 +65,13 @@ class EventResponse(SQLModel):
     short_name: str
     year: int
     week: int
+
+
+class TBAMatchDataRequest(SQLModel):
+    matchNumber: int
+    matchLevel: str
+    teamNumber: int
+    alliance: Alliance
 
 
 
@@ -101,6 +115,55 @@ async def get_match_data_for_event_or_404(
     if not match_data:
         raise HTTPException(status_code=404, detail="No match data available to export")
     return match_data
+
+
+async def get_tba_match_data_for_match(
+    session: AsyncSession,
+    user: dict,
+    request: TBAMatchDataRequest,
+) -> Dict[str, Any]:
+    event_key = await get_active_event_key_for_user(session, user)
+    event = await get_event_or_404(session, event_key)
+
+    match = await get_match_or_404(
+        session,
+        event_key,
+        request.matchNumber,
+        request.matchLevel,
+    )
+
+    alliance_teams = (
+        (match.red1_id, match.red2_id, match.red3_id)
+        if request.alliance == Alliance.RED
+        else (match.blue1_id, match.blue2_id, match.blue3_id)
+    )
+
+    if request.teamNumber not in alliance_teams:
+        raise HTTPException(
+            status_code=400,
+            detail="Requested team is not part of the specified alliance for this match",
+        )
+
+    tba_model = TBA_MATCH_DATA_MODELS_BY_YEAR.get(event.year)
+    if tba_model is None:
+        raise HTTPException(
+            status_code=404,
+            detail="TBA match data is not available for this event",
+        )
+
+    statement = select(tba_model).where(
+        tba_model.event_key == event_key,
+        tba_model.match_number == request.matchNumber,
+        tba_model.match_level == request.matchLevel,
+        tba_model.alliance == request.alliance,
+    )
+    result = await session.execute(statement)
+    record = result.scalars().first()
+
+    if record is None:
+        raise HTTPException(status_code=404, detail="TBA match data not found for this match")
+
+    return record.model_dump()
 
 
 def _get_model_field_order(model: type[SQLModel]) -> List[str]:

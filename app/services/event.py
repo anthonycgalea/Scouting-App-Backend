@@ -120,7 +120,7 @@ def serialize_match_data_for_export(match_data: Sequence[SQLModel]) -> List[Dict
         return []
 
     model = match_data[0].__class__
-    excluded_fields = {"user_id", "season"}
+    excluded_fields = {"user_id", "season", "organization_id", "timestamp"}
     ordered_fields = [
         field_name
         for field_name in _get_model_field_order(model)

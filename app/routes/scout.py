@@ -21,6 +21,7 @@ from services.scout import (
     get_already_scouted_matches,
     get_data_validations_for_active_event,
     submit_scouted_match,
+    update_tba_match_data_for_pending_alliances,
 )
 
 
@@ -40,6 +41,14 @@ async def update_data_validation_records(
     session: AsyncSession = Depends(get_session),
 ):
     return await batch_update_data_validations(session, user, updates)
+
+
+@router.post("/data/tbaUpdate")
+async def update_tba_data(
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await update_tba_match_data_for_pending_alliances(session, user)
 
 @router.get("/matches")
 async def get_scouted_matches(

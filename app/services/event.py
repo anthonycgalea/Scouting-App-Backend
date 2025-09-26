@@ -103,18 +103,45 @@ async def get_match_data_for_event_or_404(
     return match_data
 
 
+def _get_model_field_order(model: type[SQLModel]) -> List[str]:
+    """Return the model fields in the order they are defined."""
+
+    # SQLModel inherits from pydantic, which exposes either ``__fields__`` (v1)
+    # or ``model_fields`` (v2).  We support both to be future-proof.
+    field_mapping = getattr(model, "model_fields", None)
+    if field_mapping is None:
+        field_mapping = getattr(model, "__fields__", {})
+
+    return list(field_mapping.keys())
+
+
 def serialize_match_data_for_export(match_data: Sequence[SQLModel]) -> List[Dict[str, Any]]:
+    if not match_data:
+        return []
+
+    model = match_data[0].__class__
+    excluded_fields = {"user_id", "season"}
+    ordered_fields = [
+        field_name
+        for field_name in _get_model_field_order(model)
+        if field_name not in excluded_fields
+    ]
+
     serialized: List[Dict[str, Any]] = []
     for record in match_data:
-        row = record.dict()
-        for key, value in list(row.items()):
+        row: Dict[str, Any] = {}
+        for field_name in ordered_fields:
+            value = getattr(record, field_name)
             if isinstance(value, Enum):
-                row[key] = value.value
+                row[field_name] = value.value
             elif isinstance(value, datetime):
-                row[key] = value.isoformat()
+                row[field_name] = value.isoformat()
             elif isinstance(value, UUID):
-                row[key] = str(value)
+                row[field_name] = str(value)
+            else:
+                row[field_name] = value
         serialized.append(row)
+
     return serialized
 
 

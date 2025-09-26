@@ -1,7 +1,9 @@
-from sqlmodel import SQLModel, Field, Relationship
-from typing import Optional
-from datetime import datetime
 from enum import Enum
+
+from sqlmodel import Field
+
+from .tba_match_data import Alliance, TBAMatchData
+
 
 class Endgame2025(str, Enum):
     NONE = "NONE"
@@ -9,25 +11,9 @@ class Endgame2025(str, Enum):
     SHALLOW = "SHALLOW"
     DEEP = "DEEP"
 
-class Alliance(str, Enum):
-    RED="RED"
-    BLUE="BLUE"
 
-class TBAMatchData2025(SQLModel, table=True):
-    team_number: int = Field(
-        foreign_key="teamrecord.team_number", 
-        primary_key=True
-    )
-    event_key: str = Field(
-        foreign_key="frcevent.event_key", 
-        primary_key=True, 
-        max_length=15
-    )
-    match_number: int = Field(primary_key=True)
-    match_level: str = Field(primary_key=True, max_length=50)
-    alliance: Alliance = Field(primary_key=True, default=Alliance.RED)
-    timestamp: datetime = Field(default_factory=datetime.now())
-
+class TBAMatchData2025(TBAMatchData, table=True):
+    __tablename__ = "tbamatchdata2025"
 
     # Autonomous Levels
     al4c: int = Field(default=0)
@@ -49,4 +35,3 @@ class TBAMatchData2025(SQLModel, table=True):
 
     # Endgame
     endgame: Endgame2025 = Field(default=Endgame2025.NONE)
-    

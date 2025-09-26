@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 import os, httpx
 import csv
 import io
+import json
+from html import escape
 from typing import List
 from uuid import UUID
 
@@ -54,6 +56,13 @@ from models import (
     Endgame2025,
 )
 from models.user_organization import UserRole
+from services.event import (
+    MatchExportRequest,
+    MatchExportType,
+    get_active_event_key_for_user,
+    get_match_data_for_event_or_404,
+    serialize_match_data_for_export,
+)
 
 class CreateOrgEventCommand(SQLModel):
     OrganizationId: int
@@ -101,6 +110,54 @@ class OrganizationMemberDeleteRequest(SQLModel):
 
 class OrganizationApplicationDeleteRequest(SQLModel):
     userId: UUID
+
+
+@router.post("/downloadData")
+async def download_event_match_data(
+    request: MatchExportRequest,
+    session: AsyncSession = Depends(get_session),
+    user=Depends(get_current_user),
+) -> Response:
+    event_code = await get_active_event_key_for_user(session, user)
+    match_data = await get_match_data_for_event_or_404(session, event_code)
+    match_dicts = serialize_match_data_for_export(match_data)
+
+    if request.file_type == MatchExportType.CSV:
+        buffer = io.StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=list(match_dicts[0].keys()))
+        writer.writeheader()
+        writer.writerows(match_dicts)
+        content = buffer.getvalue()
+        media_type = "text/csv"
+        extension = "csv"
+    elif request.file_type == MatchExportType.JSON:
+        content = json.dumps(match_dicts, indent=2)
+        media_type = "application/json"
+        extension = "json"
+    elif request.file_type == MatchExportType.XLS:
+        headers = list(match_dicts[0].keys())
+        header_row = "".join(f"<th>{escape(str(column))}</th>" for column in headers)
+        body_rows = "".join(
+            "<tr>"
+            + "".join(f"<td>{escape(str(row[column]))}</td>" for column in headers)
+            + "</tr>"
+            for row in match_dicts
+        )
+        content = (
+            "<html><head><meta charset='utf-8'></head><body>"
+            f"<table><thead><tr>{header_row}</tr></thead><tbody>{body_rows}</tbody></table>"
+            "</body></html>"
+        )
+        media_type = "application/vnd.ms-excel"
+        extension = "xls"
+    else:  # pragma: no cover - validation should prevent this
+        raise HTTPException(status_code=400, detail="Unsupported file type")
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{event_code}_match_data.{extension}"'
+    }
+
+    return Response(content=content, media_type=media_type, headers=headers)
 
 
 @router.get("/applications", response_model=List[OrganizationApplication])

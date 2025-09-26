@@ -77,29 +77,47 @@ async def get_data_validations_for_active_event(
     result = await session.execute(statement)
     return result.unique().scalars().all()
 
-async def get_already_scouted_matches(session: AsyncSession, eventCode: str, user):
-    #check if user is part of an organization that has the orgEvent
+class ScoutMatchFilterRequest(SQLModel):
+    matchNumber: Optional[int] = None
+    matchLevel: Optional[str] = None
+    teamNumber: Optional[int] = None
 
-    #if user is guest, verify event code
 
-    #if valid, return logged in organization's scouted matches
-    pass
+async def get_already_scouted_matches(
+    session: AsyncSession,
+    user: dict,
+    filters: Optional[ScoutMatchFilterRequest] = None,
+):
+    event_key = await get_active_event_key_for_user(session, user)
+    event = await get_event_or_404(session, event_key)
 
-async def get_already_scouted_match(session: AsyncSession, eventCode: str, matchLevel: str, matchNumber: int, user):
-    #check if user is part of an organization that has the orgEvent
+    membership_id = user.get("user_org")
+    if membership_id is None:
+        raise HTTPException(status_code=404, detail="User is not logged into an organization")
 
-    #if user is guest, verify event code
+    membership = await session.get(UserOrganization, membership_id)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Organization membership not found")
 
-    #if valid, return logged in organization's scouted match
-    pass
+    match_model = MATCH_DATA_MODELS_BY_YEAR.get(event.year)
+    if match_model is None:
+        raise HTTPException(status_code=404, detail="Match data is not available for this event")
 
-async def get_already_scouted_team_match(session: AsyncSession, eventCode: str, matchLevel: str, matchNumber: int, teamNumber: int, user):
-    #check if user is part of an organization that has the orgEvent
+    statement = select(match_model).where(
+        match_model.event_key == event_key,
+        match_model.organization_id == membership.organization_id,
+    )
 
-    #if user is guest, verify event code
+    if filters:
+        if filters.matchNumber is not None:
+            statement = statement.where(match_model.match_number == filters.matchNumber)
+        if filters.matchLevel:
+            statement = statement.where(match_model.match_level == filters.matchLevel)
+        if filters.teamNumber is not None:
+            statement = statement.where(match_model.team_number == filters.teamNumber)
 
-    #if valid, return logged in organization's scouted match
-    pass
+    result = await session.execute(statement)
+    return result.scalars().all()
 
 async def batch_submit_match(session: AsyncSession, matches: List[MatchData], user: User):
     for match in matches:

@@ -22,34 +22,13 @@ async def get_data_validation_records(
 ):
     return await get_data_validations_for_active_event(session, user, filters)
 
-@router.get("/matches/{eventCode}")
+@router.get("/matches")
 async def get_scouted_matches(
-    eventCode: str,
+    filters: Optional[ScoutMatchFilterRequest] = Body(default=None),
     user=Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
 ):
-    return await get_already_scouted_matches(session, eventCode, user)
-
-@router.get("/matches/{eventCode}/match/{matchLevel}/{matchNumber}")
-async def get_scouted_match(
-    eventCode: str,
-    matchLevel: str,
-    matchNumber: int,
-    user=Depends(get_current_user),
-    session: AsyncSession = Depends(get_session)
-):
-    return await get_already_scouted_match(session, eventCode, matchLevel, matchNumber, user)
-
-@router.get("/matches/{eventCode}/match/{matchLevel}/{matchNumber}/{teamNumber}")
-async def get_scouted_team_match(
-    eventCode: str,
-    matchLevel: str,
-    matchNumber: int,
-    teamNumber: int,
-    user=Depends(get_current_user),
-    session: AsyncSession = Depends(get_session)
-):
-    return await get_already_scouted_match(session, eventCode, matchLevel, matchNumber, user, teamNumber)
+    return await get_already_scouted_matches(session, user, filters)
 
 @router.post("/submit/batch")
 async def submit_multiple_matches(

@@ -1,13 +1,16 @@
 from enum import Enum
+from datetime import datetime
+from typing import Any, Dict, List, Sequence
+from uuid import UUID
 
 from fastapi import HTTPException
-from sqlmodel import select, delete, SQLModel
+from sqlmodel import SQLModel, delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
-from uuid import UUID
-from typing import List
 
 from models import (
     MatchSchedule,
+    MatchData2025,
+    MatchData2026,
     TeamEvent,
     TeamRecord,
     FRCEvent,
@@ -37,6 +40,12 @@ class MatchExportType(str, Enum):
 
 class MatchExportRequest(SQLModel):
     file_type: MatchExportType
+
+
+MATCH_DATA_MODELS_BY_YEAR = {
+    2025: MatchData2025,
+    2026: MatchData2026,
+}
 
 class TeamRecordResponse(SQLModel):
     team_number: int
@@ -73,6 +82,41 @@ async def get_match_schedule_or_404(session: AsyncSession, eventCode: str) -> Li
     if not matches:
         raise HTTPException(status_code=404, detail="No matches found for this event")
     return matches
+
+
+async def get_match_data_for_event_or_404(
+    session: AsyncSession,
+    eventCode: str,
+):
+    event = await get_event_or_404(session, eventCode)
+    match_model = MATCH_DATA_MODELS_BY_YEAR.get(event.year)
+    if match_model is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Match data export is not supported for this event",
+        )
+
+    result = await session.execute(select(match_model).where(match_model.event_key == eventCode))
+    match_data = result.scalars().all()
+    if not match_data:
+        raise HTTPException(status_code=404, detail="No match data available to export")
+    return match_data
+
+
+def serialize_match_data_for_export(match_data: Sequence[SQLModel]) -> List[Dict[str, Any]]:
+    serialized: List[Dict[str, Any]] = []
+    for record in match_data:
+        row = record.dict()
+        for key, value in list(row.items()):
+            if isinstance(value, Enum):
+                row[key] = value.value
+            elif isinstance(value, datetime):
+                row[key] = value.isoformat()
+            elif isinstance(value, UUID):
+                row[key] = str(value)
+        serialized.append(row)
+    return serialized
+
 
 async def get_team_list_or_404(session: AsyncSession, eventCode: str) -> List[TeamRecordResponse]:
     statement = select(TeamEvent).where(

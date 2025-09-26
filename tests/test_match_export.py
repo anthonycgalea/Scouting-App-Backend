@@ -11,10 +11,12 @@ os.environ.setdefault("SUPABASE_JWT_SECRET", "test-secret")
 from app.main import app
 from app.auth.dependencies import get_current_user
 from app.models import (
+    Endgame2025,
     FRCEvent,
-    MatchSchedule,
+    MatchData2025,
     Organization,
     OrganizationEvent,
+    Season,
     TeamRecord,
     User,
     UserOrganization,
@@ -25,11 +27,12 @@ from tests.conftest import AsyncSessionLocal
 
 async def _prepare_match_data():
     async with AsyncSessionLocal() as session:
+        season = Season(id=1, year=2025, name="REEFSCAPE")
         event = FRCEvent(
-            event_key="2024export",
+            event_key="2025export",
             event_name="Export Event",
             short_name="Export",
-            year=2024,
+            year=2025,
             week=1,
         )
         organization = Organization(name="Export Org", team_number=9999)
@@ -47,16 +50,9 @@ async def _prepare_match_data():
         teams = [
             TeamRecord(teamNumber=1111, teamName="Team 1111"),
             TeamRecord(teamNumber=2222, teamName="Team 2222"),
-            TeamRecord(teamNumber=3333, teamName="Team 3333"),
-            TeamRecord(teamNumber=4444, teamName="Team 4444"),
-            TeamRecord(teamNumber=5555, teamName="Team 5555"),
-            TeamRecord(teamNumber=6666, teamName="Team 6666"),
-            TeamRecord(teamNumber=7777, teamName="Team 7777"),
-            TeamRecord(teamNumber=8888, teamName="Team 8888"),
-            TeamRecord(teamNumber=9998, teamName="Team 9998"),
         ]
 
-        session.add_all([event, organization, user, *teams])
+        session.add_all([season, event, organization, user, *teams])
         await session.commit()
         await session.refresh(organization)
 
@@ -76,33 +72,41 @@ async def _prepare_match_data():
             active=True,
         )
 
-        matches = [
-            MatchSchedule(
+        match_data = [
+            MatchData2025(
+                season=season.id,
+                team_number=1111,
                 event_key=event.event_key,
                 match_number=1,
                 match_level="qm",
-                red1_id=1111,
-                red2_id=2222,
-                red3_id=3333,
-                blue1_id=4444,
-                blue2_id=5555,
-                blue3_id=6666,
+                user_id=user_id,
+                organization_id=organization.id,
+                notes="First match notes",
+                al4c=2,
+                al3c=1,
+                tl4c=3,
+                tNet=1,
+                endgame=Endgame2025.SHALLOW,
             ),
-            MatchSchedule(
+            MatchData2025(
+                season=season.id,
+                team_number=2222,
                 event_key=event.event_key,
-                match_number=2,
+                match_number=1,
                 match_level="qm",
-                red1_id=7777,
-                red2_id=8888,
-                red3_id=9998,
-                blue1_id=1111,
-                blue2_id=2222,
-                blue3_id=3333,
+                user_id=user_id,
+                organization_id=organization.id,
+                notes="Second match notes",
+                al4c=1,
+                tl2c=2,
+                aNet=1,
+                tProcessor=2,
+                endgame=Endgame2025.DEEP,
             ),
         ]
 
         session.add(organization_event)
-        session.add_all(matches)
+        session.add_all(match_data)
         await session.commit()
 
         return user_id, membership.id, event.event_key
@@ -133,47 +137,49 @@ def authorized_client(prepared_match_export_data):
     app.dependency_overrides.pop(get_current_user, None)
 
 
-def test_export_matches_as_csv(authorized_client):
+def test_export_match_data_as_csv(authorized_client):
     client, event_key = authorized_client
-    response = client.post("/event/matches/export", json={"file_type": "csv"})
+    response = client.post("/organization/downloadData", json={"file_type": "csv"})
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/csv")
-    assert response.headers["content-disposition"].endswith(f'{event_key}_matches.csv"')
+    assert response.headers["content-disposition"].endswith(f'{event_key}_match_data.csv"')
 
     rows = response.text.strip().splitlines()
     assert len(rows) == 3  # header + two matches
     assert "match_number" in rows[0]
-    assert "qm" in rows[1]
+    assert "First match notes" in rows[1]
 
 
-def test_export_matches_as_json(authorized_client):
+def test_export_match_data_as_json(authorized_client):
     client, event_key = authorized_client
-    response = client.post("/event/matches/export", json={"file_type": "json"})
+    response = client.post("/organization/downloadData", json={"file_type": "json"})
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")
-    assert response.headers["content-disposition"].endswith(f'{event_key}_matches.json"')
+    assert response.headers["content-disposition"].endswith(f'{event_key}_match_data.json"')
 
     payload = response.json()
     assert isinstance(payload, list)
     assert len(payload) == 2
     assert all(item["event_key"] == event_key for item in payload)
+    assert payload[0]["endgame"] in {"SHALLOW", "DEEP"}
+    assert all(isinstance(item["user_id"], str) for item in payload)
 
 
-def test_export_matches_as_xls(authorized_client):
+def test_export_match_data_as_xls(authorized_client):
     client, event_key = authorized_client
-    response = client.post("/event/matches/export", json={"file_type": "xls"})
+    response = client.post("/organization/downloadData", json={"file_type": "xls"})
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/vnd.ms-excel")
-    assert response.headers["content-disposition"].endswith(f'{event_key}_matches.xls"')
+    assert response.headers["content-disposition"].endswith(f'{event_key}_match_data.xls"')
     assert "<table" in response.text
-    assert "Team 1111" in response.text
+    assert "First match notes" in response.text
 
 
-def test_export_matches_with_invalid_type(authorized_client):
+def test_export_match_data_with_invalid_type(authorized_client):
     client, _ = authorized_client
-    response = client.post("/event/matches/export", json={"file_type": "txt"})
+    response = client.post("/organization/downloadData", json={"file_type": "txt"})
 
     assert response.status_code == 422

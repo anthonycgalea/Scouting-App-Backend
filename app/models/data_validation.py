@@ -23,6 +23,7 @@ class DataValidation(SQLModel, table=True):
         default=None,
         foreign_key="users.id"
     )
+    team_number: int = Field(foreign_key="teamrecord.team_number")
     organization_id: int = Field(primary_key=True, foreign_key="organization.id")
     timestamp: datetime = Field(default_factory=datetime.now())
     validation_status: ValidationStatus = ValidationStatus.PENDING

@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 from auth.dependencies import get_current_user
 from db.database import get_session
-from typing import List
+from typing import List, Optional
+
+from models import DataValidation
 
 router = APIRouter(
     prefix="/scout",
@@ -10,6 +12,15 @@ router = APIRouter(
 )
 
 from services.scout import *
+
+
+@router.get("/dataValidation", response_model=List[DataValidation])
+async def get_data_validation_records(
+    filters: Optional[DataValidationFilterRequest] = Body(default=None),
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await get_data_validations_for_active_event(session, user, filters)
 
 @router.get("/matches/{eventCode}")
 async def get_scouted_matches(

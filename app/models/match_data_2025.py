@@ -3,7 +3,7 @@ from typing import Optional
 from datetime import datetime
 from enum import Enum
 from uuid import UUID
-from .match_data import MatchData
+from .match_data import MatchData, register_match_data_creation_hook
 
 class Endgame2025(str, Enum):
     NONE = "NONE"
@@ -33,3 +33,7 @@ class MatchData2025(MatchData, table=True):
 
     # Endgame
     endgame: Endgame2025 = Field(default=Endgame2025.NONE)
+
+
+register_match_data_creation_hook(MatchData2025)
+

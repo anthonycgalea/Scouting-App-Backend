@@ -33,7 +33,7 @@ async def get_match_schedule(
     return await get_match_schedule_or_404(session, event_code)
 
 
-@router.get("/tbaMatchData", response_model=Dict[str, Any])
+@router.post("/tbaMatchData", response_model=Dict[str, Any])
 async def get_tba_match_data(
     request: TBAMatchDataRequest,
     session: AsyncSession = Depends(get_session),

@@ -50,7 +50,7 @@ async def update_tba_data(
 ):
     return await update_tba_match_data_for_pending_alliances(session, user)
 
-@router.get("/matches")
+@router.post("/matches")
 async def get_scouted_matches(
     filters: Optional[ScoutMatchFilterRequest] = Body(default=None),
     user=Depends(get_current_user),

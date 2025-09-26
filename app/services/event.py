@@ -238,4 +238,7 @@ async def get_active_event_key_for_user(
             detail="No active event configured for this organization",
         )
 
+    if membership.role == UserRole.GUEST and membership.event_key:
+        return membership.event_key
+
     return active_event.event_key

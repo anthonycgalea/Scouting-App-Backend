@@ -1,6 +1,5 @@
-from sqlmodel import SQLModel, Field, Relationship
+from sqlmodel import SQLModel, Field
 from uuid import UUID, uuid4
-from typing import Optional
 
 class OrganizationEvent(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)

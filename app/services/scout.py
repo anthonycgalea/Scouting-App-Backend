@@ -28,6 +28,15 @@ class DataValidationFilterRequest(SQLModel):
     teamNumber: Optional[int] = None
 
 
+class DataValidationUpdateRequest(SQLModel):
+    matchNumber: int
+    matchLevel: str
+    teamNumber: int
+    userId: UUID
+    validationStatus: ValidationStatus
+    notes: Optional[str] = None
+
+
 async def get_data_validations_for_active_event(
     session: AsyncSession,
     user: dict,
@@ -76,6 +85,64 @@ async def get_data_validations_for_active_event(
 
     result = await session.execute(statement)
     return result.unique().scalars().all()
+
+
+async def batch_update_data_validations(
+    session: AsyncSession,
+    user: dict,
+    updates: List[DataValidationUpdateRequest],
+) -> List[DataValidation]:
+    if not updates:
+        return []
+
+    event_key = await get_active_event_key_for_user(session, user)
+
+    membership_id = user.get("user_org")
+    if membership_id is None:
+        raise HTTPException(status_code=404, detail="User is not logged into an organization")
+
+    membership = await session.get(UserOrganization, membership_id)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Organization membership not found")
+
+    updated_records: List[DataValidation] = []
+
+    for update in updates:
+        statement = select(DataValidation).where(
+            DataValidation.event_key == event_key,
+            DataValidation.organization_id == membership.organization_id,
+            DataValidation.match_number == update.matchNumber,
+            DataValidation.match_level == update.matchLevel,
+            DataValidation.team_number == update.teamNumber,
+            DataValidation.user_id == update.userId,
+        )
+
+        result = await session.execute(statement)
+        record = result.scalars().first()
+
+        if record is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Data validation record not found for "
+                    f"match {update.matchNumber} {update.matchLevel} "
+                    f"team {update.teamNumber}"
+                ),
+            )
+
+        record.validation_status = update.validationStatus
+        if update.notes is not None:
+            record.notes = update.notes
+
+        session.add(record)
+        updated_records.append(record)
+
+    await session.commit()
+
+    for record in updated_records:
+        await session.refresh(record)
+
+    return updated_records
 
 class ScoutMatchFilterRequest(SQLModel):
     matchNumber: Optional[int] = None

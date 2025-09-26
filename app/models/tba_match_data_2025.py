@@ -25,7 +25,7 @@ class TBAMatchData2025(SQLModel, table=True):
     )
     match_number: int = Field(primary_key=True)
     match_level: str = Field(primary_key=True, max_length=50)
-    alliance: Alliance = Field(default=Alliance.RED)
+    alliance: Alliance = Field(primary_key=True, default=Alliance.RED)
     timestamp: datetime = Field(default_factory=datetime.now())
 
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, File
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select, SQLModel
 from datetime import datetime
@@ -6,6 +6,8 @@ from auth.dependencies import get_current_user
 from db.database import get_session
 from dotenv import load_dotenv
 import os, httpx
+import csv
+import io
 from typing import List
 from uuid import UUID
 
@@ -14,6 +16,27 @@ load_dotenv()
 
 MATCH_SCHEDULE_URL = "https://www.thebluealliance.com/api/v3/event/{event_key}/matches/simple"
 TBA_API_KEY = os.getenv("TBA_API_KEY")
+
+MATCH_DATA_2025_COLUMNS = [
+    "Event Key",
+    "Match Level",
+    "Match #",
+    "Team #",
+    "Autonomous Level 4 Coral",
+    "Autonomous Level 3 Coral",
+    "Autonomous Level 2 Coral",
+    "Autonomous Level 1 Coral",
+    "Teleop Level 4 Coral",
+    "Teleop Level 3 Coral",
+    "Teleop Level 2 Coral",
+    "Teleop Level 1 Coral",
+    "autoNet",
+    "teleopNet",
+    "autoProcessor",
+    "teleopProcessor",
+    "endgameShallow",
+    "endgameDeep",
+]
 
 router = APIRouter(
     prefix="/organization",
@@ -27,6 +50,8 @@ from models import (
     MatchSchedule,
     User,
     UserOrganization,
+    MatchData2025,
+    Endgame2025,
 )
 from models.user_organization import UserRole
 
@@ -368,6 +393,164 @@ async def get_match_schedule(
     # 4. Commit all new matches
     await session.commit()
     return {"status": "success", "event": event_key, "matches_inserted": len(match_schedule_json)}
+
+
+@router.post("/uploadData")
+async def upload_match_data(
+    file: UploadFile = File(...),
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    user_id = user.get("id")
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="User not authenticated")
+
+    membership_id = user.get("user_org")
+    if membership_id is None:
+        raise HTTPException(
+            status_code=404, detail="User is not logged into an organization"
+        )
+
+    if isinstance(user_id, str):
+        try:
+            user_id = UUID(user_id)
+        except ValueError as exc:  # pragma: no cover - defensive programming
+            raise HTTPException(status_code=400, detail="Invalid user identifier") from exc
+
+    membership = await session.get(UserOrganization, membership_id)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Organization membership not found")
+
+    if membership.user_id != user_id:
+        raise HTTPException(status_code=403, detail="User does not belong to this organization")
+
+    if membership.role not in {UserRole.ADMIN, UserRole.LEAD}:
+        raise HTTPException(
+            status_code=403,
+            detail="Only organization admins or leads can upload match data",
+        )
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    try:
+        csv_text = file_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:  # pragma: no cover - defensive programming
+        raise HTTPException(status_code=400, detail="Unable to decode CSV file") from exc
+
+    csv_stream = io.StringIO(csv_text)
+    reader = csv.DictReader(csv_stream)
+
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV file is missing headers")
+
+    missing_columns = [column for column in MATCH_DATA_2025_COLUMNS if column not in reader.fieldnames]
+    if missing_columns:
+        raise HTTPException(
+            status_code=400,
+            detail="CSV file is missing required columns: " + ", ".join(missing_columns),
+        )
+
+    def parse_int(value: str, default: int = 0) -> int:
+        if value is None:
+            return default
+        value = value.strip()
+        if value == "":
+            return default
+        try:
+            return int(float(value))
+        except ValueError:
+            return default
+
+    processed = 0
+    created = 0
+    updated = 0
+
+    for row in reader:
+        if not any((value or "").strip() for value in row.values()):
+            continue
+
+        event_key = (row.get("Event Key") or "").strip()
+        match_level = (row.get("Match Level") or "").strip()
+        match_number_raw = row.get("Match #")
+        team_number_raw = row.get("Team #")
+
+        if not event_key:
+            raise HTTPException(status_code=400, detail="Event Key is required for each row")
+        if not match_level:
+            raise HTTPException(status_code=400, detail="Match Level is required for each row")
+
+        match_number = parse_int(match_number_raw, default=None)
+        if match_number is None:
+            raise HTTPException(status_code=400, detail="Match # must be an integer")
+
+        team_number = parse_int(team_number_raw, default=None)
+        if team_number is None:
+            raise HTTPException(status_code=400, detail="Team # must be an integer")
+
+        endgame = Endgame2025.NONE
+        if parse_int(row.get("endgameDeep")) == 1:
+            endgame = Endgame2025.DEEP
+        elif parse_int(row.get("endgameShallow")) == 1:
+            endgame = Endgame2025.SHALLOW
+
+        data = {
+            "season": 1,
+            "team_number": team_number,
+            "event_key": event_key,
+            "match_number": match_number,
+            "match_level": match_level,
+            "user_id": user_id,
+            "organization_id": membership.organization_id,
+            "notes": "",
+            "timestamp": datetime.now(),
+            "al4c": parse_int(row.get("Autonomous Level 4 Coral")),
+            "al3c": parse_int(row.get("Autonomous Level 3 Coral")),
+            "al2c": parse_int(row.get("Autonomous Level 2 Coral")),
+            "al1c": parse_int(row.get("Autonomous Level 1 Coral")),
+            "tl4c": parse_int(row.get("Teleop Level 4 Coral")),
+            "tl3c": parse_int(row.get("Teleop Level 3 Coral")),
+            "tl2c": parse_int(row.get("Teleop Level 2 Coral")),
+            "tl1c": parse_int(row.get("Teleop Level 1 Coral")),
+            "aNet": parse_int(row.get("autoNet")),
+            "tNet": parse_int(row.get("teleopNet")),
+            "aProcessor": parse_int(row.get("autoProcessor")),
+            "tProcessor": parse_int(row.get("teleopProcessor")),
+            "endgame": endgame,
+        }
+
+        existing_record = await session.get(
+            MatchData2025,
+            (
+                team_number,
+                event_key,
+                match_number,
+                match_level,
+                user_id,
+            ),
+        )
+
+        if existing_record:
+            for field_name, value in data.items():
+                setattr(existing_record, field_name, value)
+            session.add(existing_record)
+            updated += 1
+        else:
+            match_data = MatchData2025(**data)
+            session.add(match_data)
+            created += 1
+
+        processed += 1
+
+    await session.commit()
+
+    return {
+        "status": "success",
+        "processed": processed,
+        "created": created,
+        "updated": updated,
+    }
 
 
 @router.get("/{organization_id}/events", response_model=List[OrganizationEventDetail])

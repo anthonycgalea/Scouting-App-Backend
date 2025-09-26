@@ -10,7 +10,7 @@ import csv
 import io
 import json
 from html import escape
-from typing import List
+from typing import Dict, Iterable, List, Sequence, Tuple, Union
 from uuid import UUID
 
 
@@ -20,25 +20,119 @@ MATCH_SCHEDULE_URL = "https://www.thebluealliance.com/api/v3/event/{event_key}/m
 TBA_API_KEY = os.getenv("TBA_API_KEY")
 
 MATCH_DATA_2025_COLUMNS = [
-    "Event Key",
-    "Match Level",
-    "Match #",
-    "Team #",
-    "Autonomous Level 4 Coral",
-    "Autonomous Level 3 Coral",
-    "Autonomous Level 2 Coral",
-    "Autonomous Level 1 Coral",
-    "Teleop Level 4 Coral",
-    "Teleop Level 3 Coral",
-    "Teleop Level 2 Coral",
-    "Teleop Level 1 Coral",
-    "autoNet",
-    "teleopNet",
-    "autoProcessor",
-    "teleopProcessor",
-    "endgameShallow",
-    "endgameDeep",
+    "team_number",
+    "event_key",
+    "match_number",
+    "match_level",
+    "notes",
+    "al4c",
+    "al3c",
+    "al2c",
+    "al1c",
+    "tl4c",
+    "tl3c",
+    "tl2c",
+    "tl1c",
+    "aNet",
+    "tNet",
+    "aProcessor",
+    "tProcessor",
+    "endgame",
 ]
+
+MATCH_DATA_2025_OPTIONAL_COLUMNS = {"notes"}
+
+MATCH_DATA_2025_COLUMN_ALIASES = {
+    "team_number": ["team_number", "Team #"],
+    "event_key": ["event_key", "Event Key"],
+    "match_number": ["match_number", "Match #"],
+    "match_level": ["match_level", "Match Level"],
+    "notes": ["notes", "Notes"],
+    "al4c": ["al4c", "Autonomous Level 4 Coral"],
+    "al3c": ["al3c", "Autonomous Level 3 Coral"],
+    "al2c": ["al2c", "Autonomous Level 2 Coral"],
+    "al1c": ["al1c", "Autonomous Level 1 Coral"],
+    "tl4c": ["tl4c", "Teleop Level 4 Coral"],
+    "tl3c": ["tl3c", "Teleop Level 3 Coral"],
+    "tl2c": ["tl2c", "Teleop Level 2 Coral"],
+    "tl1c": ["tl1c", "Teleop Level 1 Coral"],
+    "aNet": ["aNet", "autoNet"],
+    "tNet": ["tNet", "teleopNet"],
+    "aProcessor": ["aProcessor", "autoProcessor"],
+    "tProcessor": ["tProcessor", "teleopProcessor"],
+    "endgame": ["endgame"],
+}
+
+LegacyEndgameHeaders = Tuple[str, str]
+ResolvedHeader = Union[str, LegacyEndgameHeaders]
+
+
+def _normalize_header_lookup(fieldnames: Iterable[str]) -> Tuple[Dict[str, str], Dict[str, str]]:
+    exact_lookup: Dict[str, str] = {}
+    lowercase_lookup: Dict[str, str] = {}
+    for name in fieldnames:
+        exact_lookup[name] = name
+        lowercase_lookup[name.lower()] = name
+    return exact_lookup, lowercase_lookup
+
+
+def resolve_match_data_2025_headers(
+    fieldnames: Sequence[str],
+) -> Tuple[Dict[str, ResolvedHeader], List[str]]:
+    """Map expected columns to the actual CSV headers and report missing ones."""
+
+    header_map: Dict[str, ResolvedHeader] = {}
+    missing: List[str] = []
+
+    exact_lookup, lowercase_lookup = _normalize_header_lookup(fieldnames)
+
+    for column in MATCH_DATA_2025_COLUMNS:
+        aliases = MATCH_DATA_2025_COLUMN_ALIASES.get(column, [column])
+        resolved_header: Union[str, None] = None
+
+        for alias in aliases:
+            if alias in exact_lookup:
+                resolved_header = exact_lookup[alias]
+                break
+            alias_lower = alias.lower()
+            if alias_lower in lowercase_lookup:
+                resolved_header = lowercase_lookup[alias_lower]
+                break
+
+        if resolved_header is not None:
+            header_map[column] = resolved_header
+            continue
+
+        if column == "endgame":
+            shallow = None
+            deep = None
+            for alias in ("endgameShallow", "endgame_shallow"):
+                if alias in exact_lookup:
+                    shallow = exact_lookup[alias]
+                    break
+                alias_lower = alias.lower()
+                if alias_lower in lowercase_lookup:
+                    shallow = lowercase_lookup[alias_lower]
+                    break
+            for alias in ("endgameDeep", "endgame_deep"):
+                if alias in exact_lookup:
+                    deep = exact_lookup[alias]
+                    break
+                alias_lower = alias.lower()
+                if alias_lower in lowercase_lookup:
+                    deep = lowercase_lookup[alias_lower]
+                    break
+
+            if shallow and deep:
+                header_map[column] = (shallow, deep)
+                continue
+
+        if column in MATCH_DATA_2025_OPTIONAL_COLUMNS:
+            header_map[column] = ""
+        else:
+            missing.append(aliases[0])
+
+    return header_map, missing
 
 router = APIRouter(
     prefix="/organization",
@@ -502,7 +596,7 @@ async def upload_match_data(
     if not reader.fieldnames:
         raise HTTPException(status_code=400, detail="CSV file is missing headers")
 
-    missing_columns = [column for column in MATCH_DATA_2025_COLUMNS if column not in reader.fieldnames]
+    header_map, missing_columns = resolve_match_data_2025_headers(reader.fieldnames)
     if missing_columns:
         raise HTTPException(
             status_code=400,
@@ -524,14 +618,27 @@ async def upload_match_data(
     created = 0
     updated = 0
 
+    value_headers: Dict[str, str] = {
+        column: header if isinstance(header, str) else ""
+        for column, header in header_map.items()
+        if column != "endgame"
+    }
+    endgame_header = header_map.get("endgame")
+
     for row in reader:
         if not any((value or "").strip() for value in row.values()):
             continue
 
-        event_key = (row.get("Event Key") or "").strip()
-        match_level = (row.get("Match Level") or "").strip()
-        match_number_raw = row.get("Match #")
-        team_number_raw = row.get("Team #")
+        def get_row_value(column: str) -> str:
+            header = value_headers.get(column, "")
+            if not header:
+                return ""
+            return row.get(header) or ""
+
+        event_key = get_row_value("event_key").strip()
+        match_level = get_row_value("match_level").strip()
+        match_number_raw = get_row_value("match_number")
+        team_number_raw = get_row_value("team_number")
 
         if not event_key:
             raise HTTPException(status_code=400, detail="Event Key is required for each row")
@@ -547,10 +654,25 @@ async def upload_match_data(
             raise HTTPException(status_code=400, detail="Team # must be an integer")
 
         endgame = Endgame2025.NONE
-        if parse_int(row.get("endgameDeep")) == 1:
-            endgame = Endgame2025.DEEP
-        elif parse_int(row.get("endgameShallow")) == 1:
-            endgame = Endgame2025.SHALLOW
+        if isinstance(endgame_header, tuple):
+            shallow_header, deep_header = endgame_header
+            if parse_int(row.get(deep_header)) == 1:
+                endgame = Endgame2025.DEEP
+            elif parse_int(row.get(shallow_header)) == 1:
+                endgame = Endgame2025.SHALLOW
+        else:
+            raw_endgame = (row.get(endgame_header) or "").strip() if endgame_header else ""
+            if raw_endgame:
+                normalized_endgame = raw_endgame.upper()
+                try:
+                    endgame = Endgame2025(normalized_endgame)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid endgame value: {raw_endgame}",
+                    )
+
+        notes_value = get_row_value("notes").strip()
 
         data = {
             "season": 1,
@@ -560,20 +682,20 @@ async def upload_match_data(
             "match_level": match_level,
             "user_id": user_id,
             "organization_id": membership.organization_id,
-            "notes": "",
+            "notes": notes_value,
             "timestamp": datetime.now(),
-            "al4c": parse_int(row.get("Autonomous Level 4 Coral")),
-            "al3c": parse_int(row.get("Autonomous Level 3 Coral")),
-            "al2c": parse_int(row.get("Autonomous Level 2 Coral")),
-            "al1c": parse_int(row.get("Autonomous Level 1 Coral")),
-            "tl4c": parse_int(row.get("Teleop Level 4 Coral")),
-            "tl3c": parse_int(row.get("Teleop Level 3 Coral")),
-            "tl2c": parse_int(row.get("Teleop Level 2 Coral")),
-            "tl1c": parse_int(row.get("Teleop Level 1 Coral")),
-            "aNet": parse_int(row.get("autoNet")),
-            "tNet": parse_int(row.get("teleopNet")),
-            "aProcessor": parse_int(row.get("autoProcessor")),
-            "tProcessor": parse_int(row.get("teleopProcessor")),
+            "al4c": parse_int(get_row_value("al4c")),
+            "al3c": parse_int(get_row_value("al3c")),
+            "al2c": parse_int(get_row_value("al2c")),
+            "al1c": parse_int(get_row_value("al1c")),
+            "tl4c": parse_int(get_row_value("tl4c")),
+            "tl3c": parse_int(get_row_value("tl3c")),
+            "tl2c": parse_int(get_row_value("tl2c")),
+            "tl1c": parse_int(get_row_value("tl1c")),
+            "aNet": parse_int(get_row_value("aNet")),
+            "tNet": parse_int(get_row_value("tNet")),
+            "aProcessor": parse_int(get_row_value("aProcessor")),
+            "tProcessor": parse_int(get_row_value("tProcessor")),
             "endgame": endgame,
         }
 

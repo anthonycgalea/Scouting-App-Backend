@@ -2,8 +2,7 @@ from datetime import datetime
 from typing import Optional, Type
 from uuid import UUID
 
-from sqlalchemy import event
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import event, select
 from sqlmodel import Field, SQLModel
 
 
@@ -54,11 +53,19 @@ def register_match_data_creation_hook(match_model: Type[MatchData]) -> None:
             "notes": "",
         }
 
-        try:
-            connection.execute(DataValidation.__table__.insert().values(**values))
-        except IntegrityError:
-            # A matching data validation row may already exist (for example if it
-            # was created manually before the match data was inserted).  We do
-            # not want the insert to fail in that scenario, so swallow the
-            # integrity error and continue.
-            pass
+        data_validation = DataValidation.__table__
+        exists_query = (
+            select(1)
+            .select_from(data_validation)
+            .where(
+                (data_validation.c.event_key == target.event_key)
+                & (data_validation.c.match_number == target.match_number)
+                & (data_validation.c.match_level == target.match_level)
+                & (data_validation.c.user_id == target.user_id)
+                & (data_validation.c.team_number == target.team_number)
+                & (data_validation.c.organization_id == target.organization_id)
+            )
+        )
+
+        if connection.execute(exists_query).first() is None:
+            connection.execute(data_validation.insert().values(**values))

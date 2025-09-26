@@ -1,10 +1,10 @@
 import os
 from collections import defaultdict
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Callable
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Callable, Sequence, cast
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import and_
+from sqlalchemy import and_, or_
 from sqlmodel import SQLModel, delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from uuid import UUID
@@ -124,6 +124,140 @@ def _parse_tba_breakdown(event_year: int, breakdown: Optional[Dict[str, Any]]) -
         )
 
     return parser(breakdown)
+
+
+def _combine_2025_match_data(records: Sequence[MatchData]) -> Dict[str, Any]:
+    totals = {
+        "al4c": 0,
+        "al3c": 0,
+        "al2c": 0,
+        "al1c": 0,
+        "tl4c": 0,
+        "tl3c": 0,
+        "tl2c": 0,
+        "tl1c": 0,
+        "net": 0,
+        "processor": 0,
+    }
+
+    endgame_statuses: List[Optional[str]] = []
+
+    for record in records:
+        match_record = cast(MatchData2025, record)
+        totals["al4c"] += int(getattr(match_record, "al4c", 0) or 0)
+        totals["al3c"] += int(getattr(match_record, "al3c", 0) or 0)
+        totals["al2c"] += int(getattr(match_record, "al2c", 0) or 0)
+        totals["al1c"] += int(getattr(match_record, "al1c", 0) or 0)
+        totals["tl4c"] += int(getattr(match_record, "tl4c", 0) or 0)
+        totals["tl3c"] += int(getattr(match_record, "tl3c", 0) or 0)
+        totals["tl2c"] += int(getattr(match_record, "tl2c", 0) or 0)
+        totals["tl1c"] += int(getattr(match_record, "tl1c", 0) or 0)
+
+        totals["net"] += int(getattr(match_record, "aNet", 0) or 0)
+        totals["net"] += int(getattr(match_record, "tNet", 0) or 0)
+        totals["processor"] += int(getattr(match_record, "aProcessor", 0) or 0)
+        totals["processor"] += int(getattr(match_record, "tProcessor", 0) or 0)
+
+        endgame_value = getattr(match_record, "endgame", None)
+        if endgame_value is not None:
+            if isinstance(endgame_value, str):
+                endgame_statuses.append(endgame_value)
+            else:
+                endgame_statuses.append(getattr(endgame_value, "value", str(endgame_value)))
+        else:
+            endgame_statuses.append(None)
+
+    totals["endgame"] = _map_endgame_status_2025(endgame_statuses)
+    return totals
+
+
+COMBINED_MATCH_DATA_AGGREGATORS_BY_YEAR: Dict[
+    int, Callable[[Sequence[MatchData]], Dict[str, Any]]
+] = {
+    2025: _combine_2025_match_data,
+}
+
+
+async def _fetch_match_data_for_validations(
+    session: AsyncSession,
+    match_model: type[MatchData],
+    validations: Sequence[DataValidation],
+) -> List[MatchData]:
+    filters = []
+    for validation in validations:
+        if validation.user_id is None:
+            return []
+
+        filters.append(
+            and_(
+                match_model.event_key == validation.event_key,
+                match_model.match_number == validation.match_number,
+                match_model.match_level == validation.match_level,
+                match_model.team_number == validation.team_number,
+                match_model.organization_id == validation.organization_id,
+                match_model.user_id == validation.user_id,
+            )
+        )
+
+    if not filters:
+        return []
+
+    statement = select(match_model).where(or_(*filters))
+    result = await session.execute(statement)
+    records = result.scalars().all()
+
+    record_map: Dict[Tuple[int, UUID], MatchData] = {
+        (record.team_number, record.user_id): record for record in records
+    }
+
+    ordered_records: List[MatchData] = []
+    for validation in validations:
+        key = (validation.team_number, validation.user_id)
+        record = record_map.get(key)
+        if record is None:
+            return []
+        ordered_records.append(record)
+
+    return ordered_records
+
+
+async def _calculate_combined_match_data(
+    session: AsyncSession,
+    event_year: int,
+    match_model: Optional[type[MatchData]],
+    validations: Sequence[DataValidation],
+) -> Optional[Dict[str, Any]]:
+    if match_model is None:
+        return None
+
+    aggregator = COMBINED_MATCH_DATA_AGGREGATORS_BY_YEAR.get(event_year)
+    if aggregator is None:
+        return None
+
+    match_records = await _fetch_match_data_for_validations(session, match_model, validations)
+    if not match_records or len(match_records) != len(validations):
+        return None
+
+    return aggregator(match_records)
+
+
+def _tba_matches_combined_data(
+    tba_data: Dict[str, Any], combined_data: Dict[str, Any]
+) -> bool:
+    for field, tba_value in tba_data.items():
+        combined_value = combined_data.get(field)
+        if field == "endgame":
+            if combined_value != tba_value:
+                return False
+            continue
+
+        if combined_value is None:
+            return False
+
+        if int(tba_value or 0) != int(combined_value or 0):
+            return False
+
+    return True
 
 
 class DataValidationFilterRequest(SQLModel):
@@ -308,6 +442,8 @@ async def update_tba_match_data_for_pending_alliances(
 
     organization_id = membership.organization_id
 
+    match_model = MATCH_DATA_MODELS_BY_YEAR.get(event.year)
+
     tba_model = TBA_MATCH_DATA_MODELS_BY_YEAR.get(event.year)
     if tba_model is None:
         raise HTTPException(status_code=404, detail="TBA match data is not available for this event year")
@@ -401,6 +537,22 @@ async def update_tba_match_data_for_pending_alliances(
                 alliance_breakdown = score_breakdown.get(color_key)
                 parsed = _parse_tba_breakdown(event.year, alliance_breakdown)
 
+                validations: List[DataValidation] = alliance_payload["validations"]
+                should_attempt_auto_validate = (
+                    len(validations) == len(alliance_payload["teams"])
+                    and len({validation.team_number for validation in validations})
+                    == len(alliance_payload["teams"])
+                )
+
+                combined_data: Optional[Dict[str, Any]] = None
+                if should_attempt_auto_validate:
+                    combined_data = await _calculate_combined_match_data(
+                        session,
+                        event.year,
+                        match_model,
+                        validations,
+                    )
+
                 statement = select(tba_model).where(
                     tba_model.event_key == event_key,
                     tba_model.match_number == match_payload["match_number"],
@@ -424,8 +576,15 @@ async def update_tba_match_data_for_pending_alliances(
                 session.add(record)
                 updated_alliances += 1
 
-                for validation in alliance_payload["validations"]:
-                    validation.validation_status = ValidationStatus.NEEDS_REVIEW
+                validations_status = ValidationStatus.NEEDS_REVIEW
+                if (
+                    combined_data is not None
+                    and _tba_matches_combined_data(parsed, combined_data)
+                ):
+                    validations_status = ValidationStatus.VALID
+
+                for validation in validations:
+                    validation.validation_status = validations_status
                     session.add(validation)
                     validation_key = (
                         validation.event_key,

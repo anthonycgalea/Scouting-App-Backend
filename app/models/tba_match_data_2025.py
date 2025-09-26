@@ -32,4 +32,6 @@ class TBAMatchData2025(TBAMatchData, table=True):
     processor: int = Field(default=0)
 
     # Endgame
-    endgame: Endgame2025 = Field(default=Endgame2025.NONE)
+    bot1endgame: Endgame2025 = Field(default=Endgame2025.NONE)
+    bot2endgame: Endgame2025 = Field(default=Endgame2025.NONE)
+    bot3endgame: Endgame2025 = Field(default=Endgame2025.NONE)

@@ -1,5 +1,6 @@
 import os
 from collections import defaultdict
+from enum import Enum as PyEnum
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Callable, Sequence, cast
 
 import httpx
@@ -37,7 +38,9 @@ TBA_MATCH_DATA_MODELS_BY_YEAR: Dict[int, type[TBAMatchData]] = {
     2025: TBAMatchData2025,
 }
 
-TBA_BREAKDOWN_PARSERS_BY_YEAR: Dict[int, Callable[[Optional[Dict[str, Any]]], Dict[str, Any]]] = {}
+TBA_BREAKDOWN_PARSERS_BY_YEAR: Dict[
+    int, Callable[[Optional[Dict[str, Any]], Sequence[int]], Dict[str, Any]]
+] = {}
 
 
 def _extract_nested_row_count(row_data: Optional[Dict[str, Any]], key: str) -> int:
@@ -79,7 +82,29 @@ def _map_endgame_status_2025(statuses: Iterable[Optional[str]]) -> TBAEndgame202
     return TBAEndgame2025.NONE
 
 
-def _parse_2025_breakdown(breakdown: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def _map_match_endgame_to_tba(status: Any) -> TBAEndgame2025:
+    if isinstance(status, TBAEndgame2025):
+        return status
+
+    if isinstance(status, str):
+        normalized = status.strip().upper()
+        if normalized in TBAEndgame2025.__members__:
+            return TBAEndgame2025[normalized]
+        try:
+            return TBAEndgame2025(normalized)
+        except ValueError:
+            return TBAEndgame2025.NONE
+
+    enum_value = getattr(status, "value", None)
+    if isinstance(enum_value, str):
+        return _map_match_endgame_to_tba(enum_value)
+
+    return TBAEndgame2025.NONE
+
+
+def _parse_2025_breakdown(
+    breakdown: Optional[Dict[str, Any]], teams: Sequence[int]
+) -> Dict[str, Any]:
     auto_top, auto_mid, auto_bot, auto_trough = _extract_reef_counts(
         (breakdown or {}).get("autoReef")
     )
@@ -89,13 +114,12 @@ def _parse_2025_breakdown(breakdown: Optional[Dict[str, Any]]) -> Dict[str, Any]
 
     net = int((breakdown or {}).get("netAlgaeCount") or 0)
     processor = int((breakdown or {}).get("wallAlgaeCount") or 0)
-    endgame = _map_endgame_status_2025(
-        [
-            (breakdown or {}).get("endGameRobot1"),
-            (breakdown or {}).get("endGameRobot2"),
-            (breakdown or {}).get("endGameRobot3"),
-        ]
-    )
+
+    endgame_values = {}
+    for index, _team_number in enumerate(teams, start=1):
+        status_key = f"endGameRobot{index}"
+        status_value = (breakdown or {}).get(status_key)
+        endgame_values[f"bot{index}endgame"] = _map_endgame_status_2025([status_value])
 
     return {
         "al4c": auto_top,
@@ -108,14 +132,16 @@ def _parse_2025_breakdown(breakdown: Optional[Dict[str, Any]]) -> Dict[str, Any]
         "tl1c": tele_trough,
         "net": net,
         "processor": processor,
-        "endgame": endgame,
+        **endgame_values,
     }
 
 
 TBA_BREAKDOWN_PARSERS_BY_YEAR[2025] = _parse_2025_breakdown
 
 
-def _parse_tba_breakdown(event_year: int, breakdown: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def _parse_tba_breakdown(
+    event_year: int, breakdown: Optional[Dict[str, Any]], teams: Sequence[int]
+) -> Dict[str, Any]:
     parser = TBA_BREAKDOWN_PARSERS_BY_YEAR.get(event_year)
     if parser is None:
         raise HTTPException(
@@ -123,10 +149,12 @@ def _parse_tba_breakdown(event_year: int, breakdown: Optional[Dict[str, Any]]) -
             detail="TBA match data is not supported for this event year",
         )
 
-    return parser(breakdown)
+    return parser(breakdown, teams)
 
 
-def _combine_2025_match_data(records: Sequence[MatchData]) -> Dict[str, Any]:
+def _combine_2025_match_data(
+    records: Sequence[MatchData], teams: Sequence[int]
+) -> Optional[Dict[str, Any]]:
     totals = {
         "al4c": 0,
         "al3c": 0,
@@ -138,9 +166,10 @@ def _combine_2025_match_data(records: Sequence[MatchData]) -> Dict[str, Any]:
         "tl1c": 0,
         "net": 0,
         "processor": 0,
+        "bot1endgame": TBAEndgame2025.NONE,
+        "bot2endgame": TBAEndgame2025.NONE,
+        "bot3endgame": TBAEndgame2025.NONE,
     }
-
-    endgame_statuses: List[Optional[str]] = []
 
     for record in records:
         match_record = cast(MatchData2025, record)
@@ -158,21 +187,24 @@ def _combine_2025_match_data(records: Sequence[MatchData]) -> Dict[str, Any]:
         totals["processor"] += int(getattr(match_record, "aProcessor", 0) or 0)
         totals["processor"] += int(getattr(match_record, "tProcessor", 0) or 0)
 
-        endgame_value = getattr(match_record, "endgame", None)
-        if endgame_value is not None:
-            if isinstance(endgame_value, str):
-                endgame_statuses.append(endgame_value)
-            else:
-                endgame_statuses.append(getattr(endgame_value, "value", str(endgame_value)))
-        else:
-            endgame_statuses.append(None)
+    records_by_team: Dict[int, MatchData2025] = {
+        int(getattr(record, "team_number", 0)): cast(MatchData2025, record)
+        for record in records
+    }
 
-    totals["endgame"] = _map_endgame_status_2025(endgame_statuses)
+    for index, team in enumerate(teams, start=1):
+        match_record = records_by_team.get(team)
+        if match_record is None:
+            return None
+        totals[f"bot{index}endgame"] = _map_match_endgame_to_tba(
+            getattr(match_record, "endgame", None)
+        )
+
     return totals
 
 
 COMBINED_MATCH_DATA_AGGREGATORS_BY_YEAR: Dict[
-    int, Callable[[Sequence[MatchData]], Dict[str, Any]]
+    int, Callable[[Sequence[MatchData], Sequence[int]], Optional[Dict[str, Any]]]
 ] = {
     2025: _combine_2025_match_data,
 }
@@ -226,6 +258,7 @@ async def _calculate_combined_match_data(
     event_year: int,
     match_model: Optional[type[MatchData]],
     validations: Sequence[DataValidation],
+    teams: Sequence[int],
 ) -> Optional[Dict[str, Any]]:
     if match_model is None:
         return None
@@ -238,7 +271,7 @@ async def _calculate_combined_match_data(
     if not match_records or len(match_records) != len(validations):
         return None
 
-    return aggregator(match_records)
+    return aggregator(match_records, teams)
 
 
 def _tba_matches_combined_data(
@@ -246,7 +279,8 @@ def _tba_matches_combined_data(
 ) -> bool:
     for field, tba_value in tba_data.items():
         combined_value = combined_data.get(field)
-        if field == "endgame":
+
+        if isinstance(tba_value, PyEnum):
             if combined_value != tba_value:
                 return False
             continue
@@ -535,7 +569,11 @@ async def update_tba_match_data_for_pending_alliances(
                 alliance_enum: Alliance = alliance_payload["alliance"]
                 color_key = alliance_enum.value.lower()
                 alliance_breakdown = score_breakdown.get(color_key)
-                parsed = _parse_tba_breakdown(event.year, alliance_breakdown)
+                parsed = _parse_tba_breakdown(
+                    event.year,
+                    alliance_breakdown,
+                    alliance_payload["teams"],
+                )
 
                 validations: List[DataValidation] = alliance_payload["validations"]
                 should_attempt_auto_validate = (
@@ -551,6 +589,7 @@ async def update_tba_match_data_for_pending_alliances(
                         event.year,
                         match_model,
                         validations,
+                        alliance_payload["teams"],
                     )
 
                 statement = select(tba_model).where(

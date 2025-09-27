@@ -77,6 +77,118 @@ def _model_dump(instance: SQLModel) -> Dict[str, Any]:
     return data
 
 
+def _normalize_user_payload(user: Any) -> Dict[str, Any]:
+    if isinstance(user, dict):
+        return user
+
+    return {
+        "id": getattr(user, "id", None),
+        "user_org": getattr(user, "logged_in_user_org", None),
+    }
+
+
+async def _prepare_match_update(
+    session: AsyncSession,
+    user: Any,
+    match: MatchData,
+) -> Tuple[MatchData, Dict[str, Any], type[MatchData], UserOrganization, MatchData, MatchData]:
+    match_payload = _model_dump(match)
+
+    try:
+        base_match = cast(MatchData, _model_validate(MatchData, match_payload))
+    except ValidationError as exc:  # pragma: no cover - defensive guard
+        raise HTTPException(status_code=422, detail="Invalid match data payload") from exc
+
+    user_payload = _normalize_user_payload(user)
+
+    event_key = await get_active_event_key_for_user(session, user_payload)
+
+    if base_match.event_key != event_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Match data event does not match the active event for this user",
+        )
+
+    membership_id = user_payload.get("user_org")
+    if membership_id is None:
+        raise HTTPException(status_code=404, detail="User is not logged into an organization")
+
+    membership = await session.get(UserOrganization, membership_id)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Organization membership not found")
+
+    if base_match.organization_id != membership.organization_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Match data does not belong to the active organization",
+        )
+
+    event = await get_event_or_404(session, event_key)
+    season = await session.get(Season, base_match.season)
+    if season is None:
+        raise HTTPException(status_code=404, detail="Season not found for provided match data")
+
+    if season.year != event.year:
+        raise HTTPException(
+            status_code=400,
+            detail="Match data season does not match the active event year",
+        )
+
+    match_model = MATCH_DATA_MODELS_BY_YEAR.get(season.year)
+    if match_model is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Match data is not available for this event",
+        )
+
+    try:
+        typed_match = cast(MatchData, _model_validate(match_model, match_payload))
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="Invalid match data for this event") from exc
+
+    statement = select(match_model).where(
+        match_model.event_key == base_match.event_key,
+        match_model.match_number == base_match.match_number,
+        match_model.match_level == base_match.match_level,
+        match_model.team_number == base_match.team_number,
+        match_model.user_id == base_match.user_id,
+        match_model.organization_id == membership.organization_id,
+    )
+
+    result = await session.execute(statement)
+    stored_match = result.scalars().first()
+
+    if stored_match is None:
+        raise HTTPException(status_code=404, detail="Match data not found for the provided identifiers")
+
+    if getattr(stored_match, "season", None) != base_match.season:
+        raise HTTPException(status_code=400, detail="Season mismatch for match data update")
+
+    return base_match, match_payload, match_model, membership, typed_match, stored_match
+
+
+def _apply_match_update(
+    stored_match: MatchData,
+    match_model: type[MatchData],
+    payload: Dict[str, Any],
+) -> None:
+    valid_fields = set(_get_model_field_names(match_model))
+    protected_fields = {
+        "event_key",
+        "match_number",
+        "match_level",
+        "team_number",
+        "user_id",
+        "organization_id",
+    }
+
+    for field_name in valid_fields:
+        if field_name in protected_fields or field_name in {"timestamp", "notes"}:
+            continue
+        if field_name in payload:
+            setattr(stored_match, field_name, payload[field_name])
+
+
 def _extract_nested_row_count(row_data: Optional[Dict[str, Any]], key: str) -> int:
     if isinstance(row_data, dict) and key in row_data:
         return int(row_data.get(key) or 0)
@@ -464,91 +576,17 @@ async def update_match_data_and_mark_validation_valid(
     user: dict,
     match: MatchData,
 ) -> DataValidation:
-    match_payload = _model_dump(match)
-    try:
-        base_match = _model_validate(MatchData, match_payload)
-    except ValidationError as exc:  # pragma: no cover - defensive guard
-        raise HTTPException(status_code=422, detail="Invalid match data payload") from exc
-
-    event_key = await get_active_event_key_for_user(session, user)
-
-    if base_match.event_key != event_key:
-        raise HTTPException(
-            status_code=400,
-            detail="Match data event does not match the active event for this user",
-        )
-
-    membership_id = user.get("user_org")
-    if membership_id is None:
-        raise HTTPException(status_code=404, detail="User is not logged into an organization")
-
-    membership = await session.get(UserOrganization, membership_id)
-    if membership is None:
-        raise HTTPException(status_code=404, detail="Organization membership not found")
-
-    if base_match.organization_id != membership.organization_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Match data does not belong to the active organization",
-        )
-
-    event = await get_event_or_404(session, event_key)
-    season = await session.get(Season, base_match.season)
-    if season is None:
-        raise HTTPException(status_code=404, detail="Season not found for provided match data")
-
-    if season.year != event.year:
-        raise HTTPException(
-            status_code=400,
-            detail="Match data season does not match the active event year",
-        )
-
-    match_model = MATCH_DATA_MODELS_BY_YEAR.get(season.year)
-    if match_model is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Match data is not available for this event",
-        )
-
-    try:
-        typed_match = _model_validate(match_model, match_payload)
-    except ValidationError as exc:
-        raise HTTPException(status_code=422, detail="Invalid match data for this event") from exc
-
-    statement = select(match_model).where(
-        match_model.event_key == base_match.event_key,
-        match_model.match_number == base_match.match_number,
-        match_model.match_level == base_match.match_level,
-        match_model.team_number == base_match.team_number,
-        match_model.user_id == base_match.user_id,
-        match_model.organization_id == membership.organization_id,
-    )
-
-    result = await session.execute(statement)
-    stored_match = result.scalars().first()
-
-    if stored_match is None:
-        raise HTTPException(status_code=404, detail="Match data not found for the provided identifiers")
-
-    if getattr(stored_match, "season", None) != base_match.season:
-        raise HTTPException(status_code=400, detail="Season mismatch for match data update")
+    (
+        base_match,
+        match_payload,
+        match_model,
+        membership,
+        typed_match,
+        stored_match,
+    ) = await _prepare_match_update(session, user, match)
 
     payload = _model_dump(typed_match)
-    valid_fields = set(_get_model_field_names(match_model))
-    protected_fields = {
-        "event_key",
-        "match_number",
-        "match_level",
-        "team_number",
-        "user_id",
-        "organization_id",
-    }
-
-    for field_name in valid_fields:
-        if field_name in protected_fields or field_name in {"timestamp", "notes"}:
-            continue
-        if field_name in payload:
-            setattr(stored_match, field_name, payload[field_name])
+    _apply_match_update(stored_match, match_model, payload)
 
     session.add(stored_match)
 
@@ -818,15 +856,19 @@ async def batch_update_match(session: AsyncSession, matches: List[MatchData], us
         update_scouted_match(session, match, user)
 
 async def update_scouted_match(session: AsyncSession, match: MatchData, user: User):
-    #check if user is part of organization specified in match.organization_id
+    (
+        _base_match,
+        _payload,
+        match_model,
+        _membership,
+        typed_match,
+        stored_match,
+    ) = await _prepare_match_update(session, user, match)
 
-    #if user is guest, verify event code
+    updated_payload = _model_dump(typed_match)
+    _apply_match_update(stored_match, match_model, updated_payload)
 
-    #if valid, go to switch for match submission
-    if (match.season == 1): #2025 REEFSCAPE
-        await update_2025_match(session, MatchData2025(match), user)
-    elif (match.season == 2): #2026 REBUILT
-        await update_2026_match(session, MatchData2026(match), user)
+    session.add(stored_match)
 
 
 async def submit_scouted_match(session: AsyncSession, match: MatchData, user: User):

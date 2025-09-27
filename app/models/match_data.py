@@ -12,8 +12,7 @@ class MatchData(SQLModel):
     season: int = Field(foreign_key="season.id")
     team_number: int = Field(
         foreign_key="teamrecord.team_number",
-        primary_key=True,
-        max_length=10,
+        primary_key=True
     )
     event_key: str = Field(
         foreign_key="frcevent.event_key",

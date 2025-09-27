@@ -12,17 +12,18 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from uuid import UUID
 
 from models import (
+    Alliance,
     DataValidation,
     MatchData,
     MatchData2025,
     MatchData2026,
     MatchSchedule,
+    Season,
     TBAMatchData,
     TBAMatchData2025,
     User,
     UserOrganization,
     ValidationStatus,
-    Alliance,
 )
 from models.tba_match_data_2025 import Endgame2025 as TBAEndgame2025
 
@@ -60,8 +61,19 @@ def _model_validate(model: type[SQLModel], payload: Dict[str, Any]) -> SQLModel:
 
 def _model_dump(instance: SQLModel) -> Dict[str, Any]:
     if hasattr(instance, "model_dump"):
-        return instance.model_dump()  # type: ignore[attr-defined]
-    return instance.dict()  # type: ignore[attr-defined]
+        data = instance.model_dump()  # type: ignore[attr-defined]
+        extra = getattr(instance, "model_extra", None)
+        if isinstance(extra, dict):
+            data.update(extra)
+        return data
+
+    data = instance.dict()  # type: ignore[attr-defined]
+    if hasattr(instance, "__dict__"):
+        for key, value in instance.__dict__.items():
+            if key in data or key.startswith("_"):
+                continue
+            data[key] = value
+    return data
 
 
 def _extract_nested_row_count(row_data: Optional[Dict[str, Any]], key: str) -> int:
@@ -449,8 +461,9 @@ async def batch_update_data_validations(
 async def update_match_data_and_mark_validation_valid(
     session: AsyncSession,
     user: dict,
-    match_payload: Dict[str, Any],
+    match: MatchData,
 ) -> DataValidation:
+    match_payload = _model_dump(match)
     try:
         base_match = _model_validate(MatchData, match_payload)
     except ValidationError as exc:  # pragma: no cover - defensive guard
@@ -479,7 +492,17 @@ async def update_match_data_and_mark_validation_valid(
         )
 
     event = await get_event_or_404(session, event_key)
-    match_model = MATCH_DATA_MODELS_BY_YEAR.get(event.year)
+    season = await session.get(Season, base_match.season)
+    if season is None:
+        raise HTTPException(status_code=404, detail="Season not found for provided match data")
+
+    if season.year != event.year:
+        raise HTTPException(
+            status_code=400,
+            detail="Match data season does not match the active event year",
+        )
+
+    match_model = MATCH_DATA_MODELS_BY_YEAR.get(season.year)
     if match_model is None:
         raise HTTPException(
             status_code=404,

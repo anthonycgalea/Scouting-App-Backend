@@ -7,6 +7,7 @@ import httpx
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import and_, or_
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import SQLModel, delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from uuid import UUID
@@ -840,14 +841,114 @@ async def submit_scouted_match(session: AsyncSession, match: MatchData, user: Us
         await submit_2026_match(session, MatchData2026(match), user)
 
 
+async def _submit_match_for_year(
+    session: AsyncSession,
+    match: MatchData,
+    user: User,
+    *,
+    expected_year: int,
+    match_model: type[MatchData],
+) -> None:
+    match_payload = _model_dump(match)
+    try:
+        base_match = _model_validate(MatchData, match_payload)
+    except ValidationError as exc:  # pragma: no cover - defensive guard
+        raise HTTPException(status_code=422, detail="Invalid match data payload") from exc
+
+    user_id: Optional[UUID] = getattr(user, "id", None)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="User not authenticated")
+
+    if isinstance(user_id, str):
+        try:
+            user_id = UUID(user_id)
+        except ValueError as exc:  # pragma: no cover - defensive programming
+            raise HTTPException(status_code=400, detail="Invalid user identifier") from exc
+
+    membership_id = getattr(user, "logged_in_user_org", None)
+    if membership_id is None:
+        raise HTTPException(status_code=404, detail="User is not logged into an organization")
+
+    membership = await session.get(UserOrganization, membership_id)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Organization membership not found")
+
+    if membership.user_id != user_id:
+        raise HTTPException(status_code=403, detail="User does not belong to this organization")
+
+    if base_match.organization_id != membership.organization_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Match data does not belong to the active organization",
+        )
+
+    event = await get_event_or_404(session, base_match.event_key)
+    if event.year != expected_year:
+        raise HTTPException(
+            status_code=400,
+            detail="Match data event does not match the expected season year",
+        )
+
+    season = await session.get(Season, base_match.season)
+    if season is None:
+        raise HTTPException(status_code=404, detail="Season not found for provided match data")
+
+    if season.year != expected_year:
+        raise HTTPException(
+            status_code=400,
+            detail="Match data season does not match the expected season year",
+        )
+
+    match_user_id = getattr(base_match, "user_id", None)
+    if match_user_id and match_user_id != user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Match data user does not match the authenticated user",
+        )
+
+    payload = {**match_payload, "user_id": user_id, "organization_id": membership.organization_id}
+    payload["notes"] = payload.get("notes") or ""
+    payload.pop("timestamp", None)
+
+    try:
+        typed_match = cast(MatchData, _model_validate(match_model, payload))
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="Invalid match data for this season") from exc
+
+    statement = select(match_model).where(
+        match_model.event_key == getattr(typed_match, "event_key"),
+        match_model.match_number == getattr(typed_match, "match_number"),
+        match_model.match_level == getattr(typed_match, "match_level"),
+        match_model.team_number == getattr(typed_match, "team_number"),
+        match_model.user_id == getattr(typed_match, "user_id"),
+        match_model.organization_id == getattr(typed_match, "organization_id"),
+    )
+    result = await session.execute(statement)
+    if result.scalars().first() is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Match data has already been submitted for this match",
+        )
+
+    session.add(typed_match)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Match data has already been submitted for this match",
+        ) from exc
+
+
 async def submit_2025_match(session: AsyncSession, match: MatchData2025, user: User) -> None:
-    pass
+    await _submit_match_for_year(session, match, user, expected_year=2025, match_model=MatchData2025)
 
 async def update_2025_match(session: AsyncSession, match: MatchData2025, user: User) -> None:
     pass
 
 async def submit_2026_match(session: AsyncSession, match: MatchData2026, user: User) -> None:
-    pass
+    await _submit_match_for_year(session, match, user, expected_year=2026, match_model=MatchData2026)
 
 async def update_2026_match(session: AsyncSession, match: MatchData2026, user: User) -> None:
     pass

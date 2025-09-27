@@ -5,6 +5,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple, Callable, Sequenc
 
 import httpx
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import and_, or_
 from sqlmodel import SQLModel, delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -41,6 +42,26 @@ TBA_MATCH_DATA_MODELS_BY_YEAR: Dict[int, type[TBAMatchData]] = {
 TBA_BREAKDOWN_PARSERS_BY_YEAR: Dict[
     int, Callable[[Optional[Dict[str, Any]], Sequence[int]], Dict[str, Any]]
 ] = {}
+
+
+def _get_model_field_names(model: type[SQLModel]) -> List[str]:
+    field_mapping = getattr(model, "model_fields", None)
+    if field_mapping is None:
+        field_mapping = getattr(model, "__fields__", {})
+
+    return list(field_mapping.keys())
+
+
+def _model_validate(model: type[SQLModel], payload: Dict[str, Any]) -> SQLModel:
+    if hasattr(model, "model_validate"):
+        return model.model_validate(payload)  # type: ignore[attr-defined]
+    return model.parse_obj(payload)  # type: ignore[attr-defined]
+
+
+def _model_dump(instance: SQLModel) -> Dict[str, Any]:
+    if hasattr(instance, "model_dump"):
+        return instance.model_dump()  # type: ignore[attr-defined]
+    return instance.dict()  # type: ignore[attr-defined]
 
 
 def _extract_nested_row_count(row_data: Optional[Dict[str, Any]], key: str) -> int:
@@ -423,6 +444,118 @@ async def batch_update_data_validations(
         await session.refresh(record)
 
     return updated_records
+
+
+async def update_match_data_and_mark_validation_valid(
+    session: AsyncSession,
+    user: dict,
+    match_payload: Dict[str, Any],
+) -> DataValidation:
+    try:
+        base_match = _model_validate(MatchData, match_payload)
+    except ValidationError as exc:  # pragma: no cover - defensive guard
+        raise HTTPException(status_code=422, detail="Invalid match data payload") from exc
+
+    event_key = await get_active_event_key_for_user(session, user)
+
+    if base_match.event_key != event_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Match data event does not match the active event for this user",
+        )
+
+    membership_id = user.get("user_org")
+    if membership_id is None:
+        raise HTTPException(status_code=404, detail="User is not logged into an organization")
+
+    membership = await session.get(UserOrganization, membership_id)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Organization membership not found")
+
+    if base_match.organization_id != membership.organization_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Match data does not belong to the active organization",
+        )
+
+    event = await get_event_or_404(session, event_key)
+    match_model = MATCH_DATA_MODELS_BY_YEAR.get(event.year)
+    if match_model is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Match data is not available for this event",
+        )
+
+    try:
+        typed_match = _model_validate(match_model, match_payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="Invalid match data for this event") from exc
+
+    statement = select(match_model).where(
+        match_model.event_key == base_match.event_key,
+        match_model.match_number == base_match.match_number,
+        match_model.match_level == base_match.match_level,
+        match_model.team_number == base_match.team_number,
+        match_model.user_id == base_match.user_id,
+        match_model.organization_id == membership.organization_id,
+    )
+
+    result = await session.execute(statement)
+    stored_match = result.scalars().first()
+
+    if stored_match is None:
+        raise HTTPException(status_code=404, detail="Match data not found for the provided identifiers")
+
+    if getattr(stored_match, "season", None) != base_match.season:
+        raise HTTPException(status_code=400, detail="Season mismatch for match data update")
+
+    payload = _model_dump(typed_match)
+    valid_fields = set(_get_model_field_names(match_model))
+    protected_fields = {
+        "event_key",
+        "match_number",
+        "match_level",
+        "team_number",
+        "user_id",
+        "organization_id",
+    }
+
+    for field_name in valid_fields:
+        if field_name in protected_fields or field_name in {"timestamp", "notes"}:
+            continue
+        if field_name in payload:
+            setattr(stored_match, field_name, payload[field_name])
+
+    session.add(stored_match)
+
+    validation_statement = select(DataValidation).where(
+        DataValidation.event_key == base_match.event_key,
+        DataValidation.match_number == base_match.match_number,
+        DataValidation.match_level == base_match.match_level,
+        DataValidation.team_number == base_match.team_number,
+        DataValidation.user_id == base_match.user_id,
+        DataValidation.organization_id == membership.organization_id,
+    )
+
+    validation_result = await session.execute(validation_statement)
+    validation = validation_result.scalars().first()
+
+    if validation is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Data validation record not found for this match",
+        )
+
+    validation.validation_status = ValidationStatus.VALID
+    if "notes" in match_payload:
+        validation.notes = base_match.notes or ""
+    session.add(validation)
+
+    await session.commit()
+    await session.refresh(validation)
+
+    return validation
+
 
 class ScoutMatchFilterRequest(SQLModel):
     matchNumber: Optional[int] = None

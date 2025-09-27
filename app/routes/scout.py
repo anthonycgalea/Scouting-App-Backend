@@ -2,7 +2,7 @@ from fastapi import APIRouter, Body, Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 from auth.dependencies import get_current_user
 from db.database import get_session
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from models import DataValidation, MatchData
 
@@ -21,6 +21,7 @@ from services.scout import (
     get_already_scouted_matches,
     get_data_validations_for_active_event,
     submit_scouted_match,
+    update_match_data_and_mark_validation_valid,
     update_tba_match_data_for_pending_alliances,
 )
 
@@ -41,6 +42,15 @@ async def update_data_validation_records(
     session: AsyncSession = Depends(get_session),
 ):
     return await batch_update_data_validations(session, user, updates)
+
+
+@router.put("/dataValidation", response_model=DataValidation)
+async def mark_match_data_valid(
+    match: Dict[str, Any],
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await update_match_data_and_mark_validation_valid(session, user, match)
 
 
 @router.post("/data/tbaUpdate")

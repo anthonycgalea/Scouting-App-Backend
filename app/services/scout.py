@@ -112,6 +112,14 @@ def _parse_2025_breakdown(
         (breakdown or {}).get("teleopReef")
     )
 
+    # TBA reports teleop reef counts as the total corals scored by the end of
+    # the match (auto + teleop). Remove the auto contribution so that the
+    # teleop values represent just the teleop period performance.
+    tele_top = max(tele_top - auto_top, 0)
+    tele_mid = max(tele_mid - auto_mid, 0)
+    tele_bot = max(tele_bot - auto_bot, 0)
+    tele_trough = max(tele_trough - auto_trough, 0)
+
     net = int((breakdown or {}).get("netAlgaeCount") or 0)
     processor = int((breakdown or {}).get("wallAlgaeCount") or 0)
 

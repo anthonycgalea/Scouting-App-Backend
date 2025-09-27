@@ -2,7 +2,7 @@ from fastapi import APIRouter, Body, Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 from auth.dependencies import get_current_user
 from db.database import get_session
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from models import DataValidation, MatchData
 
@@ -46,7 +46,7 @@ async def update_data_validation_records(
 
 @router.put("/dataValidation", response_model=DataValidation)
 async def mark_match_data_valid(
-    match: Dict[str, Any],
+    match: MatchData,
     user=Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):

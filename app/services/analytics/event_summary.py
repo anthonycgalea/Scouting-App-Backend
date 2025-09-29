@@ -36,20 +36,20 @@ def _default_yearly_configs() -> Dict[int, YearlyScoringConfig]:
     return {
         2025: YearlyScoringConfig(
             auto_weights={
-                "al4c": 6.0,
-                "al3c": 5.0,
+                "al4c": 7.0,
+                "al3c": 6.0,
                 "al2c": 4.0,
                 "al1c": 3.0,
                 "aNet": 4.0,
-                "aProcessor": 8.0,
+                "aProcessor": 2.0,
             },
             teleop_weights={
                 "tl4c": 5.0,
                 "tl3c": 4.0,
                 "tl2c": 3.0,
                 "tl1c": 2.0,
-                "tNet": 2.0,
-                "tProcessor": 6.0,
+                "tNet": 4.0,
+                "tProcessor": 2.0,
             },
             endgame_points={
                 "NONE": 0.0,

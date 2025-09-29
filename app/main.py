@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routes import admin, user, event, organizationadmin, user, scout, team, season
+from routes import admin, analytics, event, organizationadmin, user, scout, team, season
 
 # Create FastAPI app
 app = FastAPI(title="Scouting App API")
@@ -18,10 +18,10 @@ app.add_middleware(
 )
 
 app.include_router(admin.router)
+app.include_router(analytics.router)
 app.include_router(user.router)
 app.include_router(event.router)
 app.include_router(organizationadmin.router)
-app.include_router(user.router)
 app.include_router(scout.router)
 app.include_router(team.router)
 app.include_router(season.router)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Mapping, Sequence
+from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
 
 import pandas as pd
 from fastapi import HTTPException
@@ -92,6 +92,24 @@ class TeamEventSummary(SQLModel):
     endgame_points_average: float
     game_piece_average: float
     total_points_average: float
+
+
+class DistributionStatistics(SQLModel):
+    min: float = 0.0
+    lowerQuartile: float = 0.0
+    median: float = 0.0
+    upperQuartile: float = 0.0
+    max: float = 0.0
+    average: float = 0.0
+
+
+class TeamEventDetailedSummary(SQLModel):
+    team_number: int
+    matches_played: int
+    autonomous_points: DistributionStatistics
+    teleop_points: DistributionStatistics
+    game_pieces: DistributionStatistics
+    total_points: DistributionStatistics
 
 
 def _normalize_user_payload(user: object) -> Dict[str, object]:
@@ -234,11 +252,74 @@ def _summarize_by_team(df: pd.DataFrame, config: YearlyScoringConfig) -> List[Di
     return summary.to_dict(orient="records")
 
 
-async def get_team_event_summary(
-    session: AsyncSession,
-    user: object,
-) -> List[TeamEventSummary]:
-    user_payload = _normalize_user_payload(user)
+def _round_stat(value: float) -> float:
+    if pd.isna(value):
+        return 0.0
+    return round(float(value), 2)
+
+
+def _calculate_distribution_statistics(series: pd.Series) -> DistributionStatistics:
+    if series.empty:
+        return DistributionStatistics()
+
+    numeric_series = pd.to_numeric(series, errors="coerce").dropna()
+    if numeric_series.empty:
+        return DistributionStatistics()
+
+    return DistributionStatistics(
+        min=_round_stat(numeric_series.min()),
+        lowerQuartile=_round_stat(
+            numeric_series.quantile(0.25, interpolation="linear")
+        ),
+        median=_round_stat(numeric_series.median()),
+        upperQuartile=_round_stat(
+            numeric_series.quantile(0.75, interpolation="linear")
+        ),
+        max=_round_stat(numeric_series.max()),
+        average=_round_stat(numeric_series.mean()),
+    )
+
+
+def _summarize_detailed_by_team(
+    df: pd.DataFrame, config: YearlyScoringConfig
+) -> List[TeamEventDetailedSummary]:
+    if df.empty:
+        return []
+
+    df = df.copy()
+    df["autonomous_points"] = _weighted_sum(df, config.auto_weights)
+    df["teleop_points"] = _weighted_sum(df, config.teleop_weights)
+    df["endgame_points"] = _endgame_points(df, config)
+    df["game_piece_count"] = _calculate_game_piece_counts(df, config.game_piece_fields)
+    df["total_points"] = (
+        df["autonomous_points"] + df["teleop_points"] + df["endgame_points"]
+    )
+
+    summaries: List[TeamEventDetailedSummary] = []
+    grouped = df.groupby("team_number")
+    for team_number, group in grouped:
+        summaries.append(
+            TeamEventDetailedSummary(
+                team_number=int(team_number) if pd.notna(team_number) else 0,
+                matches_played=int(group["match_number"].count()),
+                autonomous_points=_calculate_distribution_statistics(
+                    group["autonomous_points"]
+                ),
+                teleop_points=_calculate_distribution_statistics(group["teleop_points"]),
+                game_pieces=_calculate_distribution_statistics(
+                    group["game_piece_count"]
+                ),
+                total_points=_calculate_distribution_statistics(group["total_points"]),
+            )
+        )
+
+    summaries.sort(key=lambda entry: entry.team_number)
+    return summaries
+
+
+async def _load_event_dataframe(
+    session: AsyncSession, user_payload: Dict[str, object]
+) -> Tuple[pd.DataFrame, YearlyScoringConfig]:
     event_key = await get_active_event_key_for_user(session, user_payload)
     event = await get_event_or_404(session, event_key)
     membership = await _get_membership(session, user_payload)
@@ -269,10 +350,36 @@ async def get_team_event_summary(
     records = result.scalars().all()
 
     if not records:
-        return []
+        return pd.DataFrame(), scoring_config
 
     dataframe = _records_to_dataframe(records, scoring_config)
+    return dataframe, scoring_config
+
+
+async def get_team_event_summary(
+    session: AsyncSession,
+    user: object,
+) -> List[TeamEventSummary]:
+    user_payload = _normalize_user_payload(user)
+    dataframe, scoring_config = await _load_event_dataframe(session, user_payload)
+
+    if dataframe.empty:
+        return []
+
     summaries = _summarize_by_team(dataframe, scoring_config)
     return [TeamEventSummary(**row) for row in summaries]
+
+
+async def get_team_event_detailed_summary(
+    session: AsyncSession,
+    user: object,
+) -> List[TeamEventDetailedSummary]:
+    user_payload = _normalize_user_payload(user)
+    dataframe, scoring_config = await _load_event_dataframe(session, user_payload)
+
+    if dataframe.empty:
+        return []
+
+    return _summarize_detailed_by_team(dataframe, scoring_config)
 
 

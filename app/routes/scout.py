@@ -82,9 +82,16 @@ async def mark_match_data_valid(
     if stored_match is None:
         raise HTTPException(status_code=404, detail="Match data not found for the provided identifiers")
 
-    dummy_payload = {**match_payload, "notes": stored_match.notes or ""}
+    stored_payload = stored_match.model_dump()
 
-    dummy_match = match_model(**dummy_payload)
+    merged_payload = {**stored_payload, **{key: value for key, value in match_payload.items() if key != "notes"}}
+
+    if "notes" in match_payload:
+        merged_payload["notes"] = (requested_notes or "") if requested_notes is not None else ""
+    else:
+        merged_payload["notes"] = stored_payload.get("notes") or ""
+
+    dummy_match = match_model(**merged_payload)
 
     await update_scouted_match(session, dummy_match, user)
 

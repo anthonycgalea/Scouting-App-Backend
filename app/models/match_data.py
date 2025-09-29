@@ -4,10 +4,13 @@ from uuid import UUID
 
 from sqlalchemy import event, select
 from sqlmodel import Field, SQLModel
+from pydantic import ConfigDict
 
 
 class MatchData(SQLModel):
     """Base fields shared by all match data tables."""
+
+    model_config = ConfigDict(extra="allow")
 
     season: int = Field(foreign_key="season.id")
     team_number: int = Field(

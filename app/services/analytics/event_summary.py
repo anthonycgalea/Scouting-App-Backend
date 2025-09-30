@@ -109,11 +109,37 @@ class TeamEventZScoreSummary(SQLModel):
     endgame_points_average: float
     game_piece_average: float
     total_points_average: float
+    autonomous_level_4_coral_average: float = 0.0
+    autonomous_level_3_coral_average: float = 0.0
+    autonomous_level_2_coral_average: float = 0.0
+    autonomous_level_1_coral_average: float = 0.0
+    teleop_level_4_coral_average: float = 0.0
+    teleop_level_3_coral_average: float = 0.0
+    teleop_level_2_coral_average: float = 0.0
+    teleop_level_1_coral_average: float = 0.0
+    autonomous_net_average: float = 0.0
+    teleop_net_average: float = 0.0
+    autonomous_processor_average: float = 0.0
+    teleop_processor_average: float = 0.0
+    teleop_cycles_average: float = 0.0
     autonomous_points_z: float
     teleop_points_z: float
     endgame_points_z: float
     game_piece_z: float
     total_points_z: float
+    autonomous_level_4_coral_z: float = 0.0
+    autonomous_level_3_coral_z: float = 0.0
+    autonomous_level_2_coral_z: float = 0.0
+    autonomous_level_1_coral_z: float = 0.0
+    teleop_level_4_coral_z: float = 0.0
+    teleop_level_3_coral_z: float = 0.0
+    teleop_level_2_coral_z: float = 0.0
+    teleop_level_1_coral_z: float = 0.0
+    autonomous_net_z: float = 0.0
+    teleop_net_z: float = 0.0
+    autonomous_processor_z: float = 0.0
+    teleop_processor_z: float = 0.0
+    teleop_cycles_z: float = 0.0
 
 
 class DistributionStatistics(SQLModel):
@@ -275,33 +301,70 @@ def _build_team_summary_dataframe(
     working["game_piece_count"] = _calculate_game_piece_counts(
         working, config.game_piece_fields
     )
+    teleop_cycle_fields = [
+        field
+        for field in (
+            "tl4c",
+            "tl3c",
+            "tl2c",
+            "tl1c",
+            "tNet",
+            "tProcessor",
+        )
+        if field in working.columns
+    ]
+    if teleop_cycle_fields:
+        working["teleop_cycles"] = _calculate_game_piece_counts(
+            working, teleop_cycle_fields
+        )
     working["total_points"] = (
         working["autonomous_points"]
         + working["teleop_points"]
         + working["endgame_points"]
     )
 
+    aggregations = {
+        "matches_played": ("match_number", "count"),
+        "autonomous_points_average": ("autonomous_points", "mean"),
+        "teleop_points_average": ("teleop_points", "mean"),
+        "endgame_points_average": ("endgame_points", "mean"),
+        "game_piece_average": ("game_piece_count", "mean"),
+        "total_points_average": ("total_points", "mean"),
+    }
+
+    field_average_mapping = {
+        "al4c": "autonomous_level_4_coral_average",
+        "al3c": "autonomous_level_3_coral_average",
+        "al2c": "autonomous_level_2_coral_average",
+        "al1c": "autonomous_level_1_coral_average",
+        "tl4c": "teleop_level_4_coral_average",
+        "tl3c": "teleop_level_3_coral_average",
+        "tl2c": "teleop_level_2_coral_average",
+        "tl1c": "teleop_level_1_coral_average",
+        "aNet": "autonomous_net_average",
+        "tNet": "teleop_net_average",
+        "aProcessor": "autonomous_processor_average",
+        "tProcessor": "teleop_processor_average",
+    }
+
+    for field, alias in field_average_mapping.items():
+        if field in working.columns:
+            aggregations[alias] = (field, "mean")
+
+    if "teleop_cycles" in working.columns:
+        aggregations["teleop_cycles_average"] = ("teleop_cycles", "mean")
+
     summary = (
         working.groupby("team_number")
-        .agg(
-            matches_played=("match_number", "count"),
-            autonomous_points_average=("autonomous_points", "mean"),
-            teleop_points_average=("teleop_points", "mean"),
-            endgame_points_average=("endgame_points", "mean"),
-            game_piece_average=("game_piece_count", "mean"),
-            total_points_average=("total_points", "mean"),
-        )
+        .agg(**aggregations)
         .reset_index()
         .sort_values("team_number")
     )
 
-    for column in [
-        "autonomous_points_average",
-        "teleop_points_average",
-        "endgame_points_average",
-        "game_piece_average",
-        "total_points_average",
-    ]:
+    average_columns = [
+        column for column in summary.columns if column.endswith("_average")
+    ]
+    for column in average_columns:
         summary[column] = summary[column].fillna(0.0).round(2)
 
     summary["matches_played"] = summary["matches_played"].fillna(0).astype(int)
@@ -484,6 +547,19 @@ async def get_team_event_z_scores(
         "endgame_points_average",
         "game_piece_average",
         "total_points_average",
+        "autonomous_level_4_coral_average",
+        "autonomous_level_3_coral_average",
+        "autonomous_level_2_coral_average",
+        "autonomous_level_1_coral_average",
+        "teleop_level_4_coral_average",
+        "teleop_level_3_coral_average",
+        "teleop_level_2_coral_average",
+        "teleop_level_1_coral_average",
+        "autonomous_net_average",
+        "teleop_net_average",
+        "autonomous_processor_average",
+        "teleop_processor_average",
+        "teleop_cycles_average",
     ]
     summary_with_z, extremes = _append_z_scores(summary_df, stat_columns)
 

@@ -247,3 +247,34 @@ def test_get_team_event_detailed_summary(summary_client):
     second_total = second["total_points"]
     for key in ("min", "lowerQuartile", "median", "upperQuartile", "max", "average"):
         assert second_total[key] == pytest.approx(41.0)
+
+
+def test_get_team_event_z_scores(summary_client):
+    response = summary_client.get("/analytics/event/teams/zScores")
+
+    assert response.status_code == 200
+    payload = response.json()
+
+    teams = payload["teams"]
+    assert len(teams) == 2
+
+    first, second = teams
+    assert first["team_number"] == 1111
+    assert second["team_number"] == 2222
+
+    assert first["autonomous_level_4_coral_average"] == pytest.approx(0.5)
+    assert first["teleop_cycles_average"] == pytest.approx(4.0)
+    assert second["teleop_cycles_average"] == pytest.approx(5.0)
+
+    assert first["autonomous_level_4_coral_z"] == pytest.approx(1.0)
+    assert second["autonomous_level_4_coral_z"] == pytest.approx(-1.0)
+    assert first["teleop_cycles_z"] == pytest.approx(-1.0)
+    assert second["teleop_cycles_z"] == pytest.approx(1.0)
+    assert first["autonomous_level_1_coral_z"] == pytest.approx(0.0)
+    assert second["autonomous_level_1_coral_z"] == pytest.approx(0.0)
+
+    extremes = payload["z_score_extremes"]
+    assert extremes["autonomous_level_4_coral_average"]["min"] == pytest.approx(-1.0)
+    assert extremes["autonomous_level_4_coral_average"]["max"] == pytest.approx(1.0)
+    assert extremes["teleop_cycles_average"]["min"] == pytest.approx(-1.0)
+    assert extremes["teleop_cycles_average"]["max"] == pytest.approx(1.0)

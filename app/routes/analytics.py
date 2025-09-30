@@ -8,7 +8,9 @@ from db.database import get_session
 from services.analytics.event_summary import (
     TeamEventDetailedSummary,
     TeamEventSummary,
+    TeamMatchHistory,
     get_team_event_detailed_summary,
+    get_team_event_match_history,
     get_team_event_summary,
 )
 
@@ -35,3 +37,14 @@ async def summarize_event_by_team_detailed(
     session: AsyncSession = Depends(get_session),
 ):
     return await get_team_event_detailed_summary(session, user)
+
+
+@router.get(
+    "/event/teams/matches",
+    response_model=List[TeamMatchHistory],
+)
+async def get_event_team_match_history(
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await get_team_event_match_history(session, user)

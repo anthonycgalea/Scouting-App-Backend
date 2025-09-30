@@ -122,11 +122,11 @@ class TeamEventZScoreSummary(SQLModel):
     autonomous_processor_average: float = 0.0
     teleop_processor_average: float = 0.0
     teleop_cycles_average: float = 0.0
-    autonomous_points_z: float
-    teleop_points_z: float
-    endgame_points_z: float
-    game_piece_z: float
-    total_points_z: float
+    autonomous_points_z: float = 0.0
+    teleop_points_z: float = 0.0
+    endgame_points_z: float = 0.0
+    game_piece_z: float = 0.0
+    total_points_z: float = 0.0
     autonomous_level_4_coral_z: float = 0.0
     autonomous_level_3_coral_z: float = 0.0
     autonomous_level_2_coral_z: float = 0.0

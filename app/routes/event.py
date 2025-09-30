@@ -4,7 +4,7 @@ from auth.dependencies import get_current_user
 from db.database import get_session
 from typing import Any, Dict, List
 
-from models import Organization, FRCEvent, EventRankings
+from models import Organization, FRCEvent
 
 router = APIRouter(
     prefix="/event",
@@ -63,7 +63,7 @@ async def get_team_list(
 async def get_event_rankings(
     session: AsyncSession = Depends(get_session),
     user=Depends(get_current_user),
-) -> List[EventRankings]:
+) -> List[EventRankingResponse]:
     event_code = await get_active_event_key_for_user(session, user)
     return await get_event_rankings_or_404(session, event_code)
 

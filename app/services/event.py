@@ -1,7 +1,7 @@
 import os
 from enum import Enum
 from datetime import datetime
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 from uuid import UUID
 
 import httpx
@@ -64,6 +64,18 @@ class TeamRecordResponse(SQLModel):
     team_number: int
     team_name: str
     location: str
+
+
+class EventRankingResponse(SQLModel):
+    event_key: str
+    rank: int
+    team_number: int
+    team_name: Optional[str]
+    ranking_points: int
+    matches_played: int
+    ranking_tiebreaker_1: float
+    ranking_tiebreaker_2: float
+
 
 class EventResponse(SQLModel):
     event_key: str
@@ -230,15 +242,32 @@ async def get_team_list_or_404(session: AsyncSession, eventCode: str) -> List[Te
         location=tr.location
     ) for tr in teamRecordResult.scalars().all()]
 
-async def get_event_rankings_or_404(session: AsyncSession, eventCode: str) -> List[EventRankings]:
-    statement = select(EventRankings).where(
-        EventRankings.event_key == eventCode
-    ).order_by(EventRankings.rank)
+async def get_event_rankings_or_404(
+    session: AsyncSession, eventCode: str
+) -> List[EventRankingResponse]:
+    statement = (
+        select(EventRankings, TeamRecord.team_name)
+        .join(TeamRecord, TeamRecord.team_number == EventRankings.team_number, isouter=True)
+        .where(EventRankings.event_key == eventCode)
+        .order_by(EventRankings.rank)
+    )
     result = await session.execute(statement)
-    rankings = result.scalars().all()
+    rankings = result.all()
     if not rankings:
         raise HTTPException(status_code=404, detail="No rankings found for this event")
-    return rankings
+    return [
+        EventRankingResponse(
+            event_key=ranking.event_key,
+            rank=ranking.rank,
+            team_number=ranking.team_number,
+            team_name=team_name,
+            ranking_points=ranking.ranking_points,
+            matches_played=ranking.matches_played,
+            ranking_tiebreaker_1=ranking.ranking_tiebreaker_1,
+            ranking_tiebreaker_2=ranking.ranking_tiebreaker_2,
+        )
+        for ranking, team_name in rankings
+    ]
 
 async def get_event_list_or_404(session: AsyncSession, year: int) -> List[EventResponse]:
     statement = select(FRCEvent).where(

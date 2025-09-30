@@ -101,6 +101,21 @@ class TeamEventSummary(SQLModel):
     total_points_average: float
 
 
+class TeamEventZScoreSummary(SQLModel):
+    team_number: int
+    matches_played: int
+    autonomous_points_average: float
+    teleop_points_average: float
+    endgame_points_average: float
+    game_piece_average: float
+    total_points_average: float
+    autonomous_points_z: float
+    teleop_points_z: float
+    endgame_points_z: float
+    game_piece_z: float
+    total_points_z: float
+
+
 class DistributionStatistics(SQLModel):
     min: float = 0.0
     lowerQuartile: float = 0.0
@@ -108,6 +123,11 @@ class DistributionStatistics(SQLModel):
     upperQuartile: float = 0.0
     max: float = 0.0
     average: float = 0.0
+
+
+class StatisticZScoreExtremes(SQLModel):
+    min: float = 0.0
+    max: float = 0.0
 
 
 class TeamEventDetailedSummary(SQLModel):
@@ -135,6 +155,11 @@ class TeamMatchHistory(SQLModel):
     team_number: int
     matches_played: int
     matches: List[TeamMatchBreakdown]
+
+
+class EventTeamZScoreResponse(SQLModel):
+    teams: List[TeamEventZScoreSummary]
+    z_score_extremes: Dict[str, StatisticZScoreExtremes]
 
 
 def _normalize_user_payload(user: object) -> Dict[str, object]:
@@ -237,21 +262,27 @@ def _records_to_dataframe(records: Sequence[SQLModel], config: YearlyScoringConf
     return pd.DataFrame(rows)
 
 
-def _summarize_by_team(df: pd.DataFrame, config: YearlyScoringConfig) -> List[Dict[str, object]]:
+def _build_team_summary_dataframe(
+    df: pd.DataFrame, config: YearlyScoringConfig
+) -> pd.DataFrame:
     if df.empty:
-        return []
+        return pd.DataFrame()
 
-    df = df.copy()
-    df["autonomous_points"] = _weighted_sum(df, config.auto_weights)
-    df["teleop_points"] = _weighted_sum(df, config.teleop_weights)
-    df["endgame_points"] = _endgame_points(df, config)
-    df["game_piece_count"] = _calculate_game_piece_counts(df, config.game_piece_fields)
-    df["total_points"] = (
-        df["autonomous_points"] + df["teleop_points"] + df["endgame_points"]
+    working = df.copy()
+    working["autonomous_points"] = _weighted_sum(working, config.auto_weights)
+    working["teleop_points"] = _weighted_sum(working, config.teleop_weights)
+    working["endgame_points"] = _endgame_points(working, config)
+    working["game_piece_count"] = _calculate_game_piece_counts(
+        working, config.game_piece_fields
+    )
+    working["total_points"] = (
+        working["autonomous_points"]
+        + working["teleop_points"]
+        + working["endgame_points"]
     )
 
     summary = (
-        df.groupby("team_number")
+        working.groupby("team_number")
         .agg(
             matches_played=("match_number", "count"),
             autonomous_points_average=("autonomous_points", "mean"),
@@ -276,7 +307,46 @@ def _summarize_by_team(df: pd.DataFrame, config: YearlyScoringConfig) -> List[Di
     summary["matches_played"] = summary["matches_played"].fillna(0).astype(int)
     summary["team_number"] = summary["team_number"].fillna(0).astype(int)
 
+    return summary
+
+
+def _summarize_by_team(df: pd.DataFrame, config: YearlyScoringConfig) -> List[Dict[str, object]]:
+    summary = _build_team_summary_dataframe(df, config)
+    if summary.empty:
+        return []
     return summary.to_dict(orient="records")
+
+
+def _append_z_scores(
+    summary: pd.DataFrame, columns: Sequence[str]
+) -> Tuple[pd.DataFrame, Dict[str, Dict[str, float]]]:
+    if summary.empty:
+        return summary, {}
+
+    zscore_columns = [column for column in columns if column in summary.columns]
+    if not zscore_columns:
+        return summary, {}
+
+    numeric = summary[zscore_columns].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+    means = numeric.mean()
+    stds = numeric.std(ddof=0)
+    safe_stds = stds.replace(0, pd.NA)
+
+    z_scores = (numeric - means) / safe_stds
+    z_scores = z_scores.fillna(0.0)
+
+    for column in zscore_columns:
+        summary[f"{column}_z"] = z_scores[column].round(2)
+
+    extremes: Dict[str, Dict[str, float]] = {}
+    for column in zscore_columns:
+        z_column = summary[f"{column}_z"]
+        extremes[column] = {
+            "min": _round_stat(z_column.min()),
+            "max": _round_stat(z_column.max()),
+        }
+
+    return summary, extremes
 
 
 def _round_stat(value: float) -> float:
@@ -395,6 +465,38 @@ async def get_team_event_summary(
 
     summaries = _summarize_by_team(dataframe, scoring_config)
     return [TeamEventSummary(**row) for row in summaries]
+
+
+async def get_team_event_z_scores(
+    session: AsyncSession,
+    user: object,
+) -> EventTeamZScoreResponse:
+    user_payload = _normalize_user_payload(user)
+    dataframe, scoring_config = await _load_event_dataframe(session, user_payload)
+
+    summary_df = _build_team_summary_dataframe(dataframe, scoring_config)
+    if summary_df.empty:
+        return EventTeamZScoreResponse(teams=[], z_score_extremes={})
+
+    stat_columns = [
+        "autonomous_points_average",
+        "teleop_points_average",
+        "endgame_points_average",
+        "game_piece_average",
+        "total_points_average",
+    ]
+    summary_with_z, extremes = _append_z_scores(summary_df, stat_columns)
+
+    teams = [
+        TeamEventZScoreSummary(**record)
+        for record in summary_with_z.to_dict(orient="records")
+    ]
+
+    extremes_payload = {
+        column: StatisticZScoreExtremes(**values) for column, values in extremes.items()
+    }
+
+    return EventTeamZScoreResponse(teams=teams, z_score_extremes=extremes_payload)
 
 
 async def get_team_event_detailed_summary(

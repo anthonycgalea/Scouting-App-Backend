@@ -83,6 +83,13 @@ def _default_yearly_configs() -> Dict[int, YearlyScoringConfig]:
 
 SCORING_CONFIGS: Dict[int, YearlyScoringConfig] = _default_yearly_configs()
 
+MATCH_LEVEL_ORDER = {
+    "QM": 0,
+    "QF": 1,
+    "SF": 2,
+    "F": 3,
+}
+
 
 class TeamEventSummary(SQLModel):
     team_number: int
@@ -110,6 +117,23 @@ class TeamEventDetailedSummary(SQLModel):
     teleop_points: DistributionStatistics
     game_pieces: DistributionStatistics
     total_points: DistributionStatistics
+
+
+class TeamMatchBreakdown(SQLModel):
+    team_number: int
+    match_number: int
+    autonomous_points: float
+    teleop_points: float
+    endgame_points: float
+    game_pieces: int
+    total_points: float
+    notes: str
+
+
+class TeamMatchHistory(SQLModel):
+    team_number: int
+    matches_played: int
+    matches: List[TeamMatchBreakdown]
 
 
 def _normalize_user_payload(user: object) -> Dict[str, object]:
@@ -199,7 +223,9 @@ def _records_to_dataframe(records: Sequence[SQLModel], config: YearlyScoringConf
         row = {
             "team_number": getattr(record, "team_number", None),
             "match_number": getattr(record, "match_number", None),
+            "match_level": getattr(record, "match_level", None),
             "endgame": getattr(record, "endgame", None),
+            "notes": getattr(record, "notes", ""),
         }
 
         for field in scoring_fields:
@@ -381,5 +407,76 @@ async def get_team_event_detailed_summary(
         return []
 
     return _summarize_detailed_by_team(dataframe, scoring_config)
+
+
+def _sort_match_level(value: object) -> int:
+    if value is None:
+        return len(MATCH_LEVEL_ORDER)
+    if hasattr(value, "value"):
+        value = getattr(value, "value")
+    if isinstance(value, str):
+        normalized = value.strip().upper()
+        return MATCH_LEVEL_ORDER.get(normalized, len(MATCH_LEVEL_ORDER))
+    return len(MATCH_LEVEL_ORDER)
+
+
+async def get_team_event_match_history(
+    session: AsyncSession,
+    user: object,
+) -> List[TeamMatchHistory]:
+    user_payload = _normalize_user_payload(user)
+    dataframe, scoring_config = await _load_event_dataframe(session, user_payload)
+
+    if dataframe.empty:
+        return []
+
+    df = dataframe.copy()
+    df["autonomous_points"] = _weighted_sum(df, scoring_config.auto_weights)
+    df["teleop_points"] = _weighted_sum(df, scoring_config.teleop_weights)
+    df["endgame_points"] = _endgame_points(df, scoring_config)
+    df["game_piece_count"] = _calculate_game_piece_counts(
+        df, scoring_config.game_piece_fields
+    )
+    df["total_points"] = (
+        df["autonomous_points"] + df["teleop_points"] + df["endgame_points"]
+    )
+
+    df["team_number"] = pd.to_numeric(df["team_number"], errors="coerce").fillna(0).astype(int)
+    df["match_number"] = pd.to_numeric(df["match_number"], errors="coerce").fillna(0).astype(int)
+    df["match_level_sort"] = df["match_level"].apply(_sort_match_level)
+    df["notes"] = df["notes"].fillna("")
+
+    histories: List[TeamMatchHistory] = []
+    for team_number in sorted(df["team_number"].unique()):
+        team_df = df[df["team_number"] == team_number].copy()
+        team_df = team_df.sort_values(["match_level_sort", "match_number"])
+
+        matches: List[TeamMatchBreakdown] = []
+        for _, row in team_df.iterrows():
+            matches.append(
+                TeamMatchBreakdown(
+                    team_number=int(team_number),
+                    match_number=int(row["match_number"]),
+                    autonomous_points=_round_stat(row["autonomous_points"]),
+                    teleop_points=_round_stat(row["teleop_points"]),
+                    endgame_points=_round_stat(row["endgame_points"]),
+                    game_pieces=int(row["game_piece_count"])
+                    if not pd.isna(row["game_piece_count"])
+                    else 0,
+                    total_points=_round_stat(row["total_points"]),
+                    notes=str(row["notes"] or ""),
+                )
+            )
+
+        histories.append(
+            TeamMatchHistory(
+                team_number=int(team_number),
+                matches_played=len(matches),
+                matches=matches,
+            )
+        )
+
+    histories.sort(key=lambda entry: entry.team_number)
+    return histories
 
 

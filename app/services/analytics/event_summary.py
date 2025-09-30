@@ -121,6 +121,7 @@ class TeamEventDetailedSummary(SQLModel):
 
 class TeamMatchBreakdown(SQLModel):
     team_number: int
+    match_level: str
     match_number: int
     autonomous_points: float
     teleop_points: float
@@ -456,6 +457,7 @@ async def get_team_event_match_history(
             matches.append(
                 TeamMatchBreakdown(
                     team_number=int(team_number),
+                    match_level=str(row["match_level"]),
                     match_number=int(row["match_number"]),
                     autonomous_points=_round_stat(row["autonomous_points"]),
                     teleop_points=_round_stat(row["teleop_points"]),

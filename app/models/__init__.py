@@ -17,3 +17,4 @@ from .tba_match_data_2025 import TBAMatchData2025
 from .team_at_event import TeamEvent
 from .user import User
 from .user_organization import UserOrganization, UserRole
+from .event_rankings import EventRankings

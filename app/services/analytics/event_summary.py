@@ -398,12 +398,15 @@ def _append_z_scores(
     z_scores = (numeric - means) / safe_stds
     z_scores = z_scores.fillna(0.0)
 
+    z_column_names: Dict[str, str] = {}
     for column in zscore_columns:
-        summary[f"{column}_z"] = z_scores[column].round(2)
+        z_column_name = f"{column.removesuffix('_average')}_z"
+        summary[z_column_name] = z_scores[column].round(2)
+        z_column_names[column] = z_column_name
 
     extremes: Dict[str, Dict[str, float]] = {}
     for column in zscore_columns:
-        z_column = summary[f"{column}_z"]
+        z_column = summary[z_column_names[column]]
         extremes[column] = {
             "min": _round_stat(z_column.min()),
             "max": _round_stat(z_column.max()),

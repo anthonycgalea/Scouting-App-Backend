@@ -230,6 +230,16 @@ async def get_team_list_or_404(session: AsyncSession, eventCode: str) -> List[Te
         location=tr.location
     ) for tr in teamRecordResult.scalars().all()]
 
+async def get_event_rankings_or_404(session: AsyncSession, eventCode: str) -> List[EventRankings]:
+    statement = select(EventRankings).where(
+        EventRankings.event_key == eventCode
+    ).order_by(EventRankings.rank)
+    result = await session.execute(statement)
+    rankings = result.scalars().all()
+    if not rankings:
+        raise HTTPException(status_code=404, detail="No rankings found for this event")
+    return rankings
+
 async def get_event_list_or_404(session: AsyncSession, year: int) -> List[EventResponse]:
     statement = select(FRCEvent).where(
         FRCEvent.year == year

@@ -59,6 +59,14 @@ async def get_team_list(
     return await get_team_list_or_404(session, event_code)
 
 
+@router.post("/getRankings")
+async def update_event_rankings(
+    session: AsyncSession = Depends(get_session),
+    user=Depends(get_current_user),
+) -> Dict[str, Any]:
+    return await update_event_rankings_from_tba(session, user)
+
+
 @router.get("/info")
 async def get_event_info(
     session: AsyncSession = Depends(get_session),

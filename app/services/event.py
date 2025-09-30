@@ -1,8 +1,10 @@
+import os
 from enum import Enum
 from datetime import datetime
 from typing import Any, Dict, List, Sequence
 from uuid import UUID
 
+import httpx
 from fastapi import HTTPException
 from sqlmodel import SQLModel, delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -21,6 +23,7 @@ from models import (
     OrganizationEvent,
     UserOrganization,
     UserRole,
+    EventRankings,
 )
 
 class MatchScheduleResponse(SQLModel):
@@ -53,6 +56,9 @@ MATCH_DATA_MODELS_BY_YEAR = {
 TBA_MATCH_DATA_MODELS_BY_YEAR: Dict[int, type[TBAMatchData]] = {
     2025: TBAMatchData2025,
 }
+
+TBA_API_ENDPOINT = os.getenv("TBA_API_ENDPOINT", "https://www.thebluealliance.com/api/v3")
+TBA_API_KEY = os.getenv("TBA_API_KEY")
 
 class TeamRecordResponse(SQLModel):
     team_number: int
@@ -305,3 +311,143 @@ async def get_active_event_key_for_user(
         return membership.event_key
 
     return active_event.event_key
+
+
+async def _get_user_membership(
+    session: AsyncSession,
+    user: dict,
+) -> UserOrganization:
+    user_id = user.get("id")
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="User not authenticated")
+
+    if isinstance(user_id, str):
+        try:
+            user_id = UUID(user_id)
+        except ValueError as exc:  # pragma: no cover - defensive programming
+            raise HTTPException(status_code=400, detail="Invalid user identifier") from exc
+
+    membership_id = user.get("user_org")
+    if membership_id is None:
+        raise HTTPException(status_code=404, detail="User is not logged into an organization")
+
+    membership = await session.get(UserOrganization, membership_id)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Organization membership not found")
+
+    if membership.user_id != user_id:
+        raise HTTPException(status_code=403, detail="User does not belong to this organization")
+
+    return membership
+
+
+async def _require_lead_or_admin_membership(
+    session: AsyncSession,
+    user: dict,
+) -> UserOrganization:
+    membership = await _get_user_membership(session, user)
+    if membership.role not in {UserRole.ADMIN, UserRole.LEAD}:
+        raise HTTPException(
+            status_code=403,
+            detail="Only organization leads or team admins can update rankings",
+        )
+    return membership
+
+
+def _parse_team_number(team_key: str) -> int:
+    if not team_key:
+        raise HTTPException(status_code=400, detail="Ranking entry missing team key")
+
+    prefix = "frc"
+    if team_key.lower().startswith(prefix):
+        team_key = team_key[len(prefix) :]
+
+    try:
+        return int(team_key)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid team key in rankings data") from exc
+
+
+def _coerce_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _coerce_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _normalize_sort_order_info(payload: Dict[str, Any]) -> None:
+    sort_order_info = payload.get("sort_order_info")
+    if isinstance(sort_order_info, list) and len(sort_order_info) >= 3:
+        second = sort_order_info[1]
+        third = sort_order_info[2]
+        if isinstance(second, dict):
+            second["name"] = "tiebreaker_1"
+        if isinstance(third, dict):
+            third["name"] = "tiebreaker2"
+
+
+async def update_event_rankings_from_tba(
+    session: AsyncSession,
+    user: dict,
+) -> Dict[str, Any]:
+    await _require_lead_or_admin_membership(session, user)
+    event_key = await get_active_event_key_for_user(session, user)
+
+    if not TBA_API_KEY:
+        raise HTTPException(status_code=500, detail="TBA API key is not configured")
+
+    rankings_url = f"{TBA_API_ENDPOINT}/event/{event_key}/rankings"
+    headers = {"X-TBA-Auth-Key": TBA_API_KEY, "accept": "application/json"}
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(rankings_url, headers=headers)
+
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to retrieve event rankings from The Blue Alliance",
+        )
+
+    payload = response.json()
+    if not isinstance(payload, dict) or "rankings" not in payload:
+        raise HTTPException(status_code=502, detail="Invalid rankings payload from The Blue Alliance")
+
+    rankings: List[Dict[str, Any]] = payload.get("rankings", []) or []
+
+    await session.execute(
+        delete(EventRankings).where(EventRankings.event_key == event_key)
+    )
+
+    for ranking in rankings:
+        team_number = _parse_team_number(ranking.get("team_key"))
+        extra_stats = ranking.get("extra_stats") or []
+        ranking_points = _coerce_int(extra_stats[0]) if extra_stats else 0
+        matches_played = _coerce_int(ranking.get("matches_played"))
+        sort_orders = ranking.get("sort_orders") or []
+        tiebreaker_1 = _coerce_float(sort_orders[1]) if len(sort_orders) > 1 else 0.0
+        tiebreaker_2 = _coerce_float(sort_orders[2]) if len(sort_orders) > 2 else 0.0
+
+        session.add(
+            EventRankings(
+                event_key=event_key,
+                rank=_coerce_int(ranking.get("rank")),
+                team_number=team_number,
+                ranking_points=ranking_points,
+                matches_played=matches_played,
+                ranking_tiebreaker_1=tiebreaker_1,
+                ranking_tiebreaker_2=tiebreaker_2,
+            )
+        )
+
+    await session.commit()
+
+    _normalize_sort_order_info(payload)
+
+    return payload

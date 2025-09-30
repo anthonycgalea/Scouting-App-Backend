@@ -278,3 +278,110 @@ def test_get_team_event_z_scores(summary_client):
     assert extremes["autonomous_level_4_coral_average"]["max"] == pytest.approx(1.0)
     assert extremes["teleop_cycles_average"]["min"] == pytest.approx(-1.0)
     assert extremes["teleop_cycles_average"]["max"] == pytest.approx(1.0)
+
+
+def _assert_head_to_head_statistic(statistic, expected):
+    for key, value in expected.items():
+        assert statistic[key] == pytest.approx(value)
+
+
+def test_get_team_event_head_to_head(summary_client):
+    response = summary_client.get("/analytics/event/teams/headToHead")
+
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert isinstance(payload, list)
+    assert len(payload) == 2
+
+    first, second = payload
+
+    assert first["team_number"] == 1111
+    assert first["matches_played"] == 2
+    assert first["endgame_success_rate"] == pytest.approx(50.0)
+
+    _assert_head_to_head_statistic(
+        first["autonomous_coral"],
+        {"min": 1.0, "max": 2.0, "median": 1.5, "average": 1.5, "stdev": 0.5},
+    )
+    _assert_head_to_head_statistic(
+        first["autonomous_net_algae"],
+        {"min": 0.0, "max": 1.0, "median": 0.5, "average": 0.5, "stdev": 0.5},
+    )
+    _assert_head_to_head_statistic(
+        first["autonomous_processor_algae"],
+        {"min": 0.0, "max": 1.0, "median": 0.5, "average": 0.5, "stdev": 0.5},
+    )
+    _assert_head_to_head_statistic(
+        first["autonomous_points"],
+        {"min": 6.0, "max": 17.0, "median": 11.5, "average": 11.5, "stdev": 5.5},
+    )
+    _assert_head_to_head_statistic(
+        first["teleop_coral"],
+        {"min": 2.0, "max": 3.0, "median": 2.5, "average": 2.5, "stdev": 0.5},
+    )
+    _assert_head_to_head_statistic(
+        first["teleop_game_pieces"],
+        {"min": 4.0, "max": 4.0, "median": 4.0, "average": 4.0, "stdev": 0.0},
+    )
+    _assert_head_to_head_statistic(
+        first["teleop_points"],
+        {"min": 10.0, "max": 16.0, "median": 13.0, "average": 13.0, "stdev": 3.0},
+    )
+    _assert_head_to_head_statistic(
+        first["teleop_net_algae"],
+        {"min": 0.0, "max": 1.0, "median": 0.5, "average": 0.5, "stdev": 0.5},
+    )
+    _assert_head_to_head_statistic(
+        first["teleop_processor_algae"],
+        {"min": 1.0, "max": 1.0, "median": 1.0, "average": 1.0, "stdev": 0.0},
+    )
+    _assert_head_to_head_statistic(
+        first["endgame_points"],
+        {"min": 2.0, "max": 6.0, "median": 4.0, "average": 4.0, "stdev": 2.0},
+    )
+    _assert_head_to_head_statistic(
+        first["total_points"],
+        {"min": 18.0, "max": 39.0, "median": 28.5, "average": 28.5, "stdev": 10.5},
+    )
+    _assert_head_to_head_statistic(
+        first["total_net_algae"],
+        {"min": 0.0, "max": 2.0, "median": 1.0, "average": 1.0, "stdev": 1.0},
+    )
+
+    assert second["team_number"] == 2222
+    assert second["matches_played"] == 1
+    assert second["endgame_success_rate"] == pytest.approx(100.0)
+
+    for key in (
+        "autonomous_coral",
+        "autonomous_net_algae",
+        "autonomous_processor_algae",
+        "autonomous_points",
+        "teleop_coral",
+        "teleop_game_pieces",
+        "teleop_points",
+        "teleop_net_algae",
+        "teleop_processor_algae",
+        "endgame_points",
+        "total_points",
+        "total_net_algae",
+    ):
+        stat = second[key]
+        expected_value = {
+            "autonomous_coral": 2.0,
+            "autonomous_net_algae": 1.0,
+            "autonomous_processor_algae": 0.0,
+            "autonomous_points": 16.0,
+            "teleop_coral": 3.0,
+            "teleop_game_pieces": 5.0,
+            "teleop_points": 13.0,
+            "teleop_net_algae": 0.0,
+            "teleop_processor_algae": 2.0,
+            "endgame_points": 12.0,
+            "total_points": 41.0,
+            "total_net_algae": 1.0,
+        }[key]
+
+        for field in ("min", "max", "median", "average", "stdev"):
+            assert stat[field] == pytest.approx(expected_value if field != "stdev" else 0.0)

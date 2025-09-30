@@ -188,6 +188,32 @@ class EventTeamZScoreResponse(SQLModel):
     z_score_extremes: Dict[str, StatisticZScoreExtremes]
 
 
+class HeadToHeadStatistic(SQLModel):
+    min: float = 0.0
+    max: float = 0.0
+    median: float = 0.0
+    average: float = 0.0
+    stdev: float = 0.0
+
+
+class TeamHeadToHeadStatistics(SQLModel):
+    team_number: int
+    matches_played: int
+    autonomous_coral: HeadToHeadStatistic
+    autonomous_net_algae: HeadToHeadStatistic
+    autonomous_processor_algae: HeadToHeadStatistic
+    autonomous_points: HeadToHeadStatistic
+    teleop_coral: HeadToHeadStatistic
+    teleop_game_pieces: HeadToHeadStatistic
+    teleop_points: HeadToHeadStatistic
+    teleop_net_algae: HeadToHeadStatistic
+    teleop_processor_algae: HeadToHeadStatistic
+    endgame_points: HeadToHeadStatistic
+    total_points: HeadToHeadStatistic
+    total_net_algae: HeadToHeadStatistic
+    endgame_success_rate: float = 0.0
+
+
 def _normalize_user_payload(user: object) -> Dict[str, object]:
     if isinstance(user, dict):
         return user
@@ -480,6 +506,134 @@ def _summarize_detailed_by_team(
     return summaries
 
 
+def _ensure_numeric_column(df: pd.DataFrame, column: str) -> pd.Series:
+    if column not in df.columns:
+        return pd.Series(0.0, index=df.index, dtype=float)
+    return pd.to_numeric(df[column], errors="coerce").fillna(0.0)
+
+
+def _calculate_head_to_head_metric(series: pd.Series) -> HeadToHeadStatistic:
+    if series.empty:
+        return HeadToHeadStatistic()
+
+    numeric_series = pd.to_numeric(series, errors="coerce").dropna()
+    if numeric_series.empty:
+        return HeadToHeadStatistic()
+
+    return HeadToHeadStatistic(
+        min=_round_stat(numeric_series.min()),
+        max=_round_stat(numeric_series.max()),
+        median=_round_stat(numeric_series.median()),
+        average=_round_stat(numeric_series.mean()),
+        stdev=_round_stat(numeric_series.std(ddof=0)),
+    )
+
+
+def _calculate_endgame_success_rate(series: pd.Series) -> float:
+    if series.empty:
+        return 0.0
+
+    normalized = series.map(_normalize_endgame_value)
+    total = len(normalized)
+    if total == 0:
+        return 0.0
+
+    successes = normalized.isin({"SHALLOW", "DEEP"}).sum()
+    return _round_stat((successes / total) * 100.0)
+
+
+def _summarize_head_to_head_by_team(
+    df: pd.DataFrame, config: YearlyScoringConfig
+) -> List[TeamHeadToHeadStatistics]:
+    if df.empty:
+        return []
+
+    working = df.copy()
+    working["autonomous_points"] = _weighted_sum(working, config.auto_weights)
+    working["teleop_points"] = _weighted_sum(working, config.teleop_weights)
+    working["endgame_points"] = _endgame_points(working, config)
+
+    auto_coral_fields = ["al4c", "al3c", "al2c", "al1c"]
+    teleop_coral_fields = ["tl4c", "tl3c", "tl2c", "tl1c"]
+
+    working["autonomous_coral"] = _calculate_game_piece_counts(
+        working, auto_coral_fields
+    )
+    working["teleop_coral"] = _calculate_game_piece_counts(
+        working, teleop_coral_fields
+    )
+
+    working["autonomous_net_algae"] = _ensure_numeric_column(working, "aNet")
+    working["teleop_net_algae"] = _ensure_numeric_column(working, "tNet")
+    working["autonomous_processor_algae"] = _ensure_numeric_column(
+        working, "aProcessor"
+    )
+    working["teleop_processor_algae"] = _ensure_numeric_column(working, "tProcessor")
+
+    teleop_game_piece_fields = [
+        *teleop_coral_fields,
+        "tNet",
+        "tProcessor",
+    ]
+    working["teleop_game_pieces"] = _calculate_game_piece_counts(
+        working, teleop_game_piece_fields
+    )
+
+    working["total_points"] = (
+        working["autonomous_points"]
+        + working["teleop_points"]
+        + working["endgame_points"]
+    )
+    working["total_net_algae"] = (
+        working["autonomous_net_algae"] + working["teleop_net_algae"]
+    )
+
+    working["team_number"] = pd.to_numeric(
+        working["team_number"], errors="coerce"
+    ).fillna(0)
+    working["match_number"] = pd.to_numeric(
+        working["match_number"], errors="coerce"
+    ).fillna(0)
+
+    summaries: List[TeamHeadToHeadStatistics] = []
+    grouped = working.groupby("team_number")
+
+    metric_mapping = [
+        ("autonomous_coral", "autonomous_coral"),
+        ("autonomous_net_algae", "autonomous_net_algae"),
+        ("autonomous_processor_algae", "autonomous_processor_algae"),
+        ("autonomous_points", "autonomous_points"),
+        ("teleop_coral", "teleop_coral"),
+        ("teleop_game_pieces", "teleop_game_pieces"),
+        ("teleop_points", "teleop_points"),
+        ("teleop_net_algae", "teleop_net_algae"),
+        ("teleop_processor_algae", "teleop_processor_algae"),
+        ("endgame_points", "endgame_points"),
+        ("total_points", "total_points"),
+        ("total_net_algae", "total_net_algae"),
+    ]
+
+    for team_number, group in grouped:
+        metrics = {
+            alias: _calculate_head_to_head_metric(group[column])
+            for column, alias in metric_mapping
+        }
+
+        summaries.append(
+            TeamHeadToHeadStatistics(
+                team_number=int(team_number) if pd.notna(team_number) else 0,
+                matches_played=int(group["match_number"].count()),
+                endgame_success_rate=_calculate_endgame_success_rate(
+                    group["endgame"]
+                ),
+                **metrics,
+            )
+        )
+
+    summaries.sort(key=lambda entry: entry.team_number)
+    return summaries
+
+
 async def _load_event_dataframe(
     session: AsyncSession, user_payload: Dict[str, object]
 ) -> Tuple[pd.DataFrame, YearlyScoringConfig]:
@@ -661,5 +815,18 @@ async def get_team_event_match_history(
 
     histories.sort(key=lambda entry: entry.team_number)
     return histories
+
+
+async def get_team_event_head_to_head(
+    session: AsyncSession,
+    user: object,
+) -> List[TeamHeadToHeadStatistics]:
+    user_payload = _normalize_user_payload(user)
+    dataframe, scoring_config = await _load_event_dataframe(session, user_payload)
+
+    if dataframe.empty:
+        return []
+
+    return _summarize_head_to_head_by_team(dataframe, scoring_config)
 
 

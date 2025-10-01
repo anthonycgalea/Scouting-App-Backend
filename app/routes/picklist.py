@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ConfigDict
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, delete
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from auth.dependencies import get_current_user
@@ -69,6 +69,14 @@ class PickListGeneratorCreateRequest(SQLModel):
     title: str
     notes: str
     favorited: bool
+
+
+class PickListUpdateRequest(SQLModel):
+    id: UUID
+    title: Optional[str] = None
+    notes: Optional[str] = None
+    favorited: Optional[bool] = None
+    ranks: Optional[List[PickListRankPayload]] = None
 
 
 @router.get("/generators")
@@ -179,6 +187,87 @@ async def create_picklist(
         **picklist.model_dump(),
         ranks=rank_responses,
     )
+
+
+@router.patch("")
+async def update_picklists(
+    requests: List[PickListUpdateRequest],
+    session: AsyncSession = Depends(get_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> List[PickListResponse]:
+    if not requests:
+        return []
+
+    membership = await require_lead_or_admin_membership(session, user)
+    event_key = await get_active_event_key_for_user(session, user)
+
+    updated_picklists: List[PickList] = []
+
+    for request in requests:
+        picklist = await session.get(PickList, request.id)
+        if (
+            picklist is None
+            or picklist.organization_id != membership.organization_id
+            or picklist.event_key != event_key
+        ):
+            raise HTTPException(status_code=404, detail="Pick list not found.")
+
+        if request.title is not None:
+            picklist.title = request.title
+
+        if request.notes is not None:
+            picklist.notes = request.notes
+
+        if request.favorited is not None:
+            picklist.favorited = request.favorited
+
+        if request.ranks is not None:
+            seen_ranks = set()
+            for rank in request.ranks:
+                if rank.rank in seen_ranks:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Duplicate rank value provided.",
+                    )
+                seen_ranks.add(rank.rank)
+
+            await session.execute(
+                delete(PickListRank).where(PickListRank.picklist_id == picklist.id)
+            )
+
+            for rank in request.ranks:
+                rank_entry = PickListRank(
+                    picklist_id=picklist.id,
+                    rank=rank.rank,
+                    team_number=rank.team_number,
+                    notes=rank.notes or "",
+                    dnp=rank.dnp,
+                )
+                session.add(rank_entry)
+
+        picklist.last_updated = datetime.now()
+        updated_picklists.append(picklist)
+
+    await session.commit()
+
+    picklist_ids = [picklist.id for picklist in updated_picklists]
+    ranks_by_picklist = await fetch_ranks_for_picklists(session, picklist_ids)
+
+    responses: List[PickListResponse] = []
+    for picklist in updated_picklists:
+        await session.refresh(picklist)
+        ranks = [
+            PickListRankResponse(**rank.model_dump(exclude={"picklist_id"}))
+            for rank in ranks_by_picklist.get(picklist.id, [])
+        ]
+        responses.append(
+            PickListResponse(
+                **picklist.model_dump(),
+                ranks=ranks,
+            )
+        )
+
+    return responses
 
 
 @router.post("/generators")

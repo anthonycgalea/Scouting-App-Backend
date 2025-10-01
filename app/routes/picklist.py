@@ -280,9 +280,9 @@ async def update_picklists(
         picklist.last_updated = datetime.now()
         updated_picklists.append(picklist)
 
-    await session.commit()
 
     picklist_ids = [picklist.id for picklist in updated_picklists]
+    await session.commit()
     ranks_by_picklist = await fetch_ranks_for_picklists(session, picklist_ids)
 
     responses: List[PickListResponse] = []

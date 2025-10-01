@@ -393,6 +393,24 @@ async def _require_lead_or_admin_membership(
     return membership
 
 
+async def get_user_membership_or_404(
+    session: AsyncSession,
+    user: dict,
+) -> UserOrganization:
+    """Return the organization membership for the authenticated user."""
+
+    return await _get_user_membership(session, user)
+
+
+async def require_lead_or_admin_membership(
+    session: AsyncSession,
+    user: dict,
+) -> UserOrganization:
+    """Ensure the current user is an organization lead or admin."""
+
+    return await _require_lead_or_admin_membership(session, user)
+
+
 def _parse_team_number(team_key: str) -> int:
     if not team_key:
         raise HTTPException(status_code=400, detail="Ranking entry missing team key")

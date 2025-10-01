@@ -1,11 +1,12 @@
-from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional
-from uuid import UUID, uuid4
-from .picklist_generator import PickListGenerator
-from datetime import datetime
+from uuid import UUID
 
-class PickList(SQLModel, table=True):
+from sqlmodel import Field, SQLModel
+
+
+class PickListRank(SQLModel, table=True):
     __tablename__ = "picklist_rank"
+
     picklist_id: UUID = Field(foreign_key="picklist.id", primary_key=True)
     rank: int = Field(primary_key=True)
     team_number: int = Field(foreign_key="teamrecord.team_number")

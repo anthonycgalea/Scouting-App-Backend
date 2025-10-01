@@ -79,6 +79,10 @@ class PickListUpdateRequest(SQLModel):
     ranks: Optional[List[PickListRankPayload]] = None
 
 
+class PickListDeleteRequest(SQLModel):
+    id: UUID
+
+
 @router.get("/generators")
 async def list_picklist_generators(
     session: AsyncSession = Depends(get_session),
@@ -187,6 +191,34 @@ async def create_picklist(
         **picklist.model_dump(),
         ranks=rank_responses,
     )
+
+
+@router.delete("")
+async def delete_picklist(
+    request: PickListDeleteRequest,
+    session: AsyncSession = Depends(get_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, bool]:
+    membership = await require_lead_or_admin_membership(session, user)
+    event_key = await get_active_event_key_for_user(session, user)
+
+    picklist = await session.get(PickList, request.id)
+
+    if (
+        picklist is None
+        or picklist.organization_id != membership.organization_id
+        or picklist.event_key != event_key
+    ):
+        raise HTTPException(status_code=404, detail="Pick list not found.")
+
+    await session.execute(
+        delete(PickListRank).where(PickListRank.picklist_id == picklist.id)
+    )
+    await session.delete(picklist)
+
+    await session.commit()
+
+    return {"success": True}
 
 
 @router.patch("")

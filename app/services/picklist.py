@@ -34,12 +34,13 @@ def get_picklist_generator_model_for_year(year: int) -> Type[PickListGenerator]:
 async def fetch_picklist_generators(
     session: AsyncSession,
     organization_id: int,
-    season: int,
+    season_year: int,
+    season_id: int,
 ) -> List[PickListGenerator]:
-    generator_model = get_picklist_generator_model_for_year(season)
+    generator_model = get_picklist_generator_model_for_year(season_year)
     statement = select(generator_model).where(
         generator_model.organization_id == organization_id,
-        generator_model.season == season,
+        generator_model.season == season_id,
     )
     result = await session.execute(statement)
     return list(result.scalars().all())

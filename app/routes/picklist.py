@@ -23,6 +23,7 @@ from services.picklist import (
     fetch_ranks_for_picklists,
     get_picklist_generator_model_for_year,
 )
+from services.season import get_season_by_year_or_404
 
 
 router = APIRouter(
@@ -78,11 +79,13 @@ async def list_picklist_generators(
     membership = await require_lead_or_admin_membership(session, user)
     event_key = await get_active_event_key_for_user(session, user)
     event = await get_event_or_404(session, event_key)
+    season = await get_season_by_year_or_404(session, event.year)
 
     generators = await fetch_picklist_generators(
         session,
         membership.organization_id,
         event.year,
+        season.id,
     )
 
     return [generator.model_dump() for generator in generators]
@@ -131,6 +134,7 @@ async def create_picklist(
     membership = await require_lead_or_admin_membership(session, user)
     event_key = await get_active_event_key_for_user(session, user)
     event = await get_event_or_404(session, event_key)
+    season = await get_season_by_year_or_404(session, event.year)
 
     seen_ranks = set()
     for entry in request.ranks:
@@ -140,7 +144,7 @@ async def create_picklist(
 
     timestamp = datetime.now()
     picklist = PickList(
-        season=event.year,
+        season=season.id,
         organization_id=membership.organization_id,
         event_key=event_key,
         title=request.title,
@@ -186,6 +190,7 @@ async def create_picklist_generator(
     membership = await require_lead_or_admin_membership(session, user)
     event_key = await get_active_event_key_for_user(session, user)
     event = await get_event_or_404(session, event_key)
+    season = await get_season_by_year_or_404(session, event.year)
 
     generator_model = get_picklist_generator_model_for_year(event.year)
 
@@ -197,7 +202,7 @@ async def create_picklist_generator(
     }
 
     generator = generator_model(
-        season=event.year,
+        season=season.id,
         organization_id=membership.organization_id,
         **base_fields,
         **payload,

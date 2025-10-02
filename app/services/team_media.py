@@ -101,16 +101,13 @@ async def _read_upload(upload: UploadFile) -> BytesIO:
 async def upload_team_image(
     session: AsyncSession,
     team_number: int,
-    event_key: str,
     upload: UploadFile,
     description: Optional[str],
     user: dict,
 ) -> RobotEventImageLinkResponse:
     """Upload an image for a team's robot and persist its metadata."""
 
-    # Currently the user information is not persisted with the image link but is
-    # kept to allow future auditing or authorization checks.
-    _ = user
+    event_key = await get_active_event_key_for_user(session, user)
 
     await _ensure_team_and_event(session, team_number, event_key)
 

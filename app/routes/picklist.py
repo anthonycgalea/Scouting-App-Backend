@@ -92,6 +92,10 @@ class PickListDeleteRequest(SQLModel):
     id: UUID
 
 
+class PickListGeneratorDeleteRequest(SQLModel):
+    id: UUID
+
+
 @router.get("/generators")
 async def list_picklist_generators(
     session: AsyncSession = Depends(get_session),
@@ -342,6 +346,33 @@ async def create_picklist_generator(
     await session.refresh(generator)
 
     return generator.model_dump()
+
+
+@router.delete("/generators")
+async def delete_picklist_generator(
+    request: PickListGeneratorDeleteRequest,
+    session: AsyncSession = Depends(get_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, bool]:
+    membership = await require_lead_or_admin_membership(session, user)
+    event_key = await get_active_event_key_for_user(session, user)
+    event = await get_event_or_404(session, event_key)
+    season = await get_season_by_year_or_404(session, event.year)
+
+    generator_model = get_picklist_generator_model_for_year(event.year)
+    generator = await session.get(generator_model, request.id)
+
+    if (
+        generator is None
+        or generator.organization_id != membership.organization_id
+        or generator.season != season.id
+    ):
+        raise HTTPException(status_code=404, detail="Pick list generator not found.")
+
+    await session.delete(generator)
+    await session.commit()
+
+    return {"success": True}
 
 
 @router.patch("/generators")

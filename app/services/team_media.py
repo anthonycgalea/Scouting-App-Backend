@@ -16,7 +16,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from models import RobotEventImageLink
 from services.aws import get_s3_client, get_team_images_bucket
-from services.event import get_event_or_404
+from services.event import get_active_event_key_for_user, get_event_or_404
 from services.team import get_team_or_404
 from sqlmodel import SQLModel
 
@@ -154,9 +154,11 @@ async def upload_team_image(
 async def list_team_images(
     session: AsyncSession,
     team_number: int,
-    event_key: str,
+    user: dict,
 ) -> list[RobotEventImageLinkResponse]:
-    """Return the stored robot images for a team at the given event."""
+    """Return the stored robot images for a team at the user's active event."""
+
+    event_key = await get_active_event_key_for_user(session, user)
 
     await _ensure_team_and_event(session, team_number, event_key)
 

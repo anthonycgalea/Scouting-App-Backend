@@ -71,6 +71,15 @@ class PickListGeneratorCreateRequest(SQLModel):
     favorited: bool
 
 
+class PickListGeneratorUpdateRequest(SQLModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: UUID
+    title: Optional[str] = None
+    notes: Optional[str] = None
+    favorited: Optional[bool] = None
+
+
 class PickListUpdateRequest(SQLModel):
     id: UUID
     title: Optional[str] = None
@@ -329,6 +338,43 @@ async def create_picklist_generator(
         **payload,
     )
     session.add(generator)
+    await session.commit()
+    await session.refresh(generator)
+
+    return generator.model_dump()
+
+
+@router.patch("/generators")
+async def update_picklist_generator(
+    request: PickListGeneratorUpdateRequest,
+    session: AsyncSession = Depends(get_session),
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    membership = await require_lead_or_admin_membership(session, user)
+    event_key = await get_active_event_key_for_user(session, user)
+    event = await get_event_or_404(session, event_key)
+    season = await get_season_by_year_or_404(session, event.year)
+
+    generator_model = get_picklist_generator_model_for_year(event.year)
+
+    generator = await session.get(generator_model, request.id)
+
+    if (
+        generator is None
+        or generator.organization_id != membership.organization_id
+        or generator.season != season.id
+    ):
+        raise HTTPException(status_code=404, detail="Pick list generator not found.")
+
+    payload = request.model_dump(exclude_none=True)
+    for field in ("id", "season", "organization_id", "timestamp"):
+        payload.pop(field, None)
+
+    for field, value in payload.items():
+        setattr(generator, field, value)
+
+    generator.timestamp = datetime.now()
+
     await session.commit()
     await session.refresh(generator)
 

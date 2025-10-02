@@ -99,6 +99,13 @@ class TeamEventSummary(SQLModel):
     endgame_points_average: float
     game_piece_average: float
     total_points_average: float
+    autonomous_coral_average: float = 0.0
+    autonomous_algae_average: float = 0.0
+    teleop_coral_average: float = 0.0
+    teleop_algae_average: float = 0.0
+    total_coral_average: float = 0.0
+    total_algae_average: float = 0.0
+    total_game_pieces_average: float = 0.0
 
 
 class TeamEventZScoreSummary(SQLModel):
@@ -122,6 +129,13 @@ class TeamEventZScoreSummary(SQLModel):
     autonomous_processor_average: float = 0.0
     teleop_processor_average: float = 0.0
     teleop_cycles_average: float = 0.0
+    autonomous_coral_average: float = 0.0
+    autonomous_algae_average: float = 0.0
+    teleop_coral_average: float = 0.0
+    teleop_algae_average: float = 0.0
+    total_coral_average: float = 0.0
+    total_algae_average: float = 0.0
+    total_game_pieces_average: float = 0.0
     autonomous_points_z: float = 0.0
     teleop_points_z: float = 0.0
     endgame_points_z: float = 0.0
@@ -140,6 +154,13 @@ class TeamEventZScoreSummary(SQLModel):
     autonomous_processor_z: float = 0.0
     teleop_processor_z: float = 0.0
     teleop_cycles_z: float = 0.0
+    autonomous_coral_z: float = 0.0
+    autonomous_algae_z: float = 0.0
+    teleop_coral_z: float = 0.0
+    teleop_algae_z: float = 0.0
+    total_coral_z: float = 0.0
+    total_algae_z: float = 0.0
+    total_game_pieces_z: float = 0.0
 
 
 class DistributionStatistics(SQLModel):
@@ -327,6 +348,25 @@ def _build_team_summary_dataframe(
     working["game_piece_count"] = _calculate_game_piece_counts(
         working, config.game_piece_fields
     )
+    auto_coral_fields = ["al4c", "al3c", "al2c", "al1c"]
+    teleop_coral_fields = ["tl4c", "tl3c", "tl2c", "tl1c"]
+    working["autonomous_coral"] = _calculate_game_piece_counts(
+        working, auto_coral_fields
+    )
+    working["teleop_coral"] = _calculate_game_piece_counts(
+        working, teleop_coral_fields
+    )
+    working["autonomous_algae"] = (
+        _ensure_numeric_column(working, "aNet")
+        + _ensure_numeric_column(working, "aProcessor")
+    )
+    working["teleop_algae"] = (
+        _ensure_numeric_column(working, "tNet")
+        + _ensure_numeric_column(working, "tProcessor")
+    )
+    working["total_coral"] = working["autonomous_coral"] + working["teleop_coral"]
+    working["total_algae"] = working["autonomous_algae"] + working["teleop_algae"]
+    working["total_game_pieces"] = working["total_coral"] + working["total_algae"]
     teleop_cycle_fields = [
         field
         for field in (
@@ -356,6 +396,13 @@ def _build_team_summary_dataframe(
         "endgame_points_average": ("endgame_points", "mean"),
         "game_piece_average": ("game_piece_count", "mean"),
         "total_points_average": ("total_points", "mean"),
+        "autonomous_coral_average": ("autonomous_coral", "mean"),
+        "autonomous_algae_average": ("autonomous_algae", "mean"),
+        "teleop_coral_average": ("teleop_coral", "mean"),
+        "teleop_algae_average": ("teleop_algae", "mean"),
+        "total_coral_average": ("total_coral", "mean"),
+        "total_algae_average": ("total_algae", "mean"),
+        "total_game_pieces_average": ("total_game_pieces", "mean"),
     }
 
     field_average_mapping = {
@@ -704,6 +751,13 @@ async def get_team_event_z_scores(
         "endgame_points_average",
         "game_piece_average",
         "total_points_average",
+        "autonomous_coral_average",
+        "autonomous_algae_average",
+        "teleop_coral_average",
+        "teleop_algae_average",
+        "total_coral_average",
+        "total_algae_average",
+        "total_game_pieces_average",
         "autonomous_level_4_coral_average",
         "autonomous_level_3_coral_average",
         "autonomous_level_2_coral_average",

@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ConfigDict
-from sqlmodel import SQLModel, delete
+from sqlmodel import Field, SQLModel, delete
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from auth.dependencies import get_current_user
@@ -21,6 +21,8 @@ from services.picklist import (
     fetch_picklist_generators,
     fetch_picklists_for_event,
     fetch_ranks_for_picklists,
+    generate_picklist_ranks_from_generator,
+    get_picklist_generator_by_id,
     get_picklist_generator_model_for_year,
 )
 from services.season import get_season_by_year_or_404
@@ -40,10 +42,13 @@ class PickListRankPayload(SQLModel):
 
 
 class PickListCreateRequest(SQLModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     title: str
     notes: Optional[str] = None
     favorited: Optional[bool] = False
-    ranks: List[PickListRankPayload]
+    generator_id: Optional[UUID] = Field(default=None, alias="generatorId")
+    ranks: List[PickListRankPayload] = Field(default_factory=list)
 
 
 class PickListRankResponse(PickListRankPayload):
@@ -161,11 +166,28 @@ async def create_picklist(
     event = await get_event_or_404(session, event_key)
     season = await get_season_by_year_or_404(session, event.year)
 
-    seen_ranks = set()
-    for entry in request.ranks:
-        if entry.rank in seen_ranks:
-            raise HTTPException(status_code=400, detail="Duplicate rank value provided.")
-        seen_ranks.add(entry.rank)
+    generated_rankings: List[int] = []
+    if request.generator_id is not None:
+        generator = await get_picklist_generator_by_id(
+            session=session,
+            generator_id=request.generator_id,
+            organization_id=membership.organization_id,
+            season_id=season.id,
+            season_year=event.year,
+        )
+        generated_rankings = await generate_picklist_ranks_from_generator(
+            session=session,
+            user=user,
+            generator=generator,
+        )
+    else:
+        seen_ranks = set()
+        for entry in request.ranks:
+            if entry.rank in seen_ranks:
+                raise HTTPException(
+                    status_code=400, detail="Duplicate rank value provided."
+                )
+            seen_ranks.add(entry.rank)
 
     timestamp = datetime.now()
     picklist = PickList(
@@ -181,15 +203,26 @@ async def create_picklist(
     session.add(picklist)
     await session.flush()
 
-    for rank in request.ranks:
-        rank_entry = PickListRank(
-            picklist_id=picklist.id,
-            rank=rank.rank,
-            team_number=rank.team_number,
-            notes=rank.notes or "",
-            dnp=rank.dnp,
-        )
-        session.add(rank_entry)
+    if generated_rankings:
+        for index, team_number in enumerate(generated_rankings, start=1):
+            rank_entry = PickListRank(
+                picklist_id=picklist.id,
+                rank=index,
+                team_number=team_number,
+                notes="",
+                dnp=False,
+            )
+            session.add(rank_entry)
+    else:
+        for rank in request.ranks:
+            rank_entry = PickListRank(
+                picklist_id=picklist.id,
+                rank=rank.rank,
+                team_number=rank.team_number,
+                notes=rank.notes or "",
+                dnp=rank.dnp,
+            )
+            session.add(rank_entry)
 
     await session.commit()
     await session.refresh(picklist)

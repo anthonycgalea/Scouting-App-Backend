@@ -118,7 +118,7 @@ async def upload_team_image(
     bucket = get_team_images_bucket()
     s3_client = get_s3_client()
 
-    extra_args = {"ACL": "public-read", "ContentType": content_type}
+    extra_args = {"ContentType": content_type}
 
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(

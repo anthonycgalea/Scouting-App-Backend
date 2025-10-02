@@ -40,7 +40,6 @@ async def get_team_match_data(
 )
 async def upload_team_image_endpoint(
     teamNumber: int,
-    event_key: str = Form(...),
     file: UploadFile = File(...),
     description: str | None = Form(None),
     user=Depends(get_current_user),
@@ -49,7 +48,6 @@ async def upload_team_image_endpoint(
     return await upload_team_image(
         session=session,
         team_number=teamNumber,
-        event_key=event_key,
         upload=file,
         description=description,
         user=user,

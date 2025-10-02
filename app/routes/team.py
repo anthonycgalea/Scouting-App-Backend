@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from auth.dependencies import get_current_user
@@ -62,7 +62,7 @@ async def upload_team_image_endpoint(
 )
 async def list_team_images_endpoint(
     teamNumber: int,
-    event_key: str = Query(...),
+    user=Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    return await list_team_images(session, teamNumber, event_key)
+    return await list_team_images(session, teamNumber, user)

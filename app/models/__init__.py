@@ -22,3 +22,5 @@ from .picklist import PickList
 from .picklist_rank import PickListRank
 from .picklist_generator import PickListGenerator
 from .picklist_generator_2025 import PickListGenerator2025
+from .pit_scout import PitScout
+from .pit_scout_2025 import PitScout2025

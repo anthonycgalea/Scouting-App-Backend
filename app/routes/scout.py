@@ -2,7 +2,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlmodel.ext.asyncio.session import AsyncSession
 from auth.dependencies import get_current_user
 from db.database import get_session
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from sqlmodel import select
@@ -145,7 +145,7 @@ async def list_pit_scout_records(
 
 @router.post("/pit", response_model=PitScout, status_code=201)
 async def create_pit_scout_entry(
-    pit: PitScout,
+    pit: Dict[str, Any] = Body(...),
     user=Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
@@ -154,7 +154,7 @@ async def create_pit_scout_entry(
 
 @router.patch("/pit", response_model=PitScout)
 async def update_pit_scout_entry(
-    pit: PitScout,
+    pit: Dict[str, Any] = Body(...),
     user=Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):

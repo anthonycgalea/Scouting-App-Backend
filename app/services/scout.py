@@ -19,6 +19,8 @@ from models import (
     MatchData2025,
     MatchData2026,
     MatchSchedule,
+    PitScout,
+    PitScout2025,
     Season,
     TBAMatchData,
     TBAMatchData2025,
@@ -41,6 +43,10 @@ MatchDataType = TypeVar("MatchDataType", bound=MatchData)
 
 TBA_MATCH_DATA_MODELS_BY_YEAR: Dict[int, type[TBAMatchData]] = {
     2025: TBAMatchData2025,
+}
+
+PIT_SCOUT_MODELS_BY_YEAR: Dict[int, type[PitScout]] = {
+    2025: PitScout2025,
 }
 
 TBA_BREAKDOWN_PARSERS_BY_YEAR: Dict[
@@ -662,6 +668,289 @@ async def get_already_scouted_matches(
 
     result = await session.execute(statement)
     return result.scalars().all()
+
+
+class PitScoutDeleteRequest(SQLModel):
+    season: int
+    team_number: int
+    event_key: str
+
+
+async def _normalize_user_id(user_payload: Dict[str, Any]) -> UUID:
+    user_id = user_payload.get("id")
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="User not authenticated")
+
+    if isinstance(user_id, UUID):
+        return user_id
+
+    try:
+        return UUID(str(user_id))
+    except (TypeError, ValueError) as exc:  # pragma: no cover - defensive guard
+        raise HTTPException(status_code=400, detail="Invalid user identifier") from exc
+
+
+async def _get_user_membership_or_404(
+    session: AsyncSession, user_payload: Dict[str, Any]
+) -> UserOrganization:
+    membership_id = user_payload.get("user_org")
+    if membership_id is None:
+        raise HTTPException(status_code=404, detail="User is not logged into an organization")
+
+    membership = await session.get(UserOrganization, membership_id)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Organization membership not found")
+
+    return membership
+
+
+def _coerce_optional_uuid(value: Any) -> Optional[UUID]:
+    if value is None or isinstance(value, UUID):
+        return value
+
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError):  # pragma: no cover - defensive guard
+        return None
+
+
+def _get_pit_model_for_event(event_year: int) -> type[PitScout]:
+    pit_model = PIT_SCOUT_MODELS_BY_YEAR.get(event_year)
+    if pit_model is None:
+        raise HTTPException(status_code=404, detail="Pit scouting is not available for this event year")
+
+    return pit_model
+
+
+async def get_pit_scout_records(
+    session: AsyncSession,
+    user: Any,
+    *,
+    team_number: Optional[int] = None,
+) -> List[PitScout]:
+    user_payload = _normalize_user_payload(user)
+    event_key = await get_active_event_key_for_user(session, user_payload)
+    event = await get_event_or_404(session, event_key)
+
+    membership = await _get_user_membership_or_404(session, user_payload)
+
+    pit_model = _get_pit_model_for_event(event.year)
+
+    statement = select(pit_model).where(
+        pit_model.event_key == event_key,
+        pit_model.organization_id == membership.organization_id,
+    )
+
+    if team_number is not None:
+        statement = statement.where(pit_model.team_number == team_number)
+
+    result = await session.execute(statement)
+    return list(result.scalars().all())
+
+
+async def _prepare_pit_payload(
+    session: AsyncSession,
+    user_payload: Dict[str, Any],
+    payload: Dict[str, Any],
+) -> tuple[type[PitScout], Season, UUID, UserOrganization, str]:
+    event_key = await get_active_event_key_for_user(session, user_payload)
+
+    if payload.get("event_key") != event_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Pit scouting event does not match the active event for this user",
+        )
+
+    membership = await _get_user_membership_or_404(session, user_payload)
+    user_id = await _normalize_user_id(user_payload)
+
+    if membership.user_id != user_id:
+        raise HTTPException(status_code=403, detail="User does not belong to this organization")
+
+    incoming_user_id = _coerce_optional_uuid(payload.get("user_id"))
+    if incoming_user_id is not None and incoming_user_id != user_id:
+        raise HTTPException(status_code=403, detail="Pit scouting user does not match the authenticated user")
+
+    payload["user_id"] = user_id
+
+    organization_id = membership.organization_id
+    incoming_org_id = payload.get("organization_id")
+    if incoming_org_id is not None:
+        try:
+            incoming_org_id_int = int(incoming_org_id)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid organization identifier for pit scouting data") from exc
+
+        if incoming_org_id_int != organization_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Pit scouting data does not belong to the active organization",
+            )
+
+    payload["organization_id"] = organization_id
+
+    if "team_number" in payload and payload.get("team_number") is not None:
+        try:
+            payload["team_number"] = int(payload["team_number"])
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid team number provided for pit scouting data") from exc
+
+    season_id = payload.get("season")
+    if season_id is None:
+        raise HTTPException(status_code=400, detail="Season is required for pit scouting records")
+
+    season = await session.get(Season, season_id)
+    if season is None:
+        raise HTTPException(status_code=404, detail="Season not found for provided pit scouting data")
+
+    event = await get_event_or_404(session, event_key)
+    if season.year != event.year:
+        raise HTTPException(
+            status_code=400,
+            detail="Pit scouting season does not match the active event year",
+        )
+
+    pit_model = _get_pit_model_for_event(event.year)
+
+    payload["notes"] = payload.get("notes") or ""
+
+    return pit_model, season, user_id, membership, event_key
+
+
+async def create_pit_scout_record(
+    session: AsyncSession,
+    pit: PitScout,
+    user: Any,
+) -> PitScout:
+    payload = _model_dump(pit)
+    user_payload = _normalize_user_payload(user)
+
+    pit_model, _season, user_id, _membership, event_key = await _prepare_pit_payload(
+        session, user_payload, payload
+    )
+
+    payload.pop("timestamp", None)
+
+    try:
+        typed_pit = cast(PitScout, _model_validate(pit_model, payload))
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="Invalid pit scouting data for this event") from exc
+
+    statement = select(pit_model).where(
+        pit_model.event_key == event_key,
+        pit_model.team_number == typed_pit.team_number,
+        pit_model.user_id == user_id,
+    )
+
+    result = await session.execute(statement)
+    if result.scalars().first() is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Pit scouting data has already been submitted for this team",
+        )
+
+    session.add(typed_pit)
+    await session.commit()
+    await session.refresh(typed_pit)
+
+    return typed_pit
+
+
+async def update_pit_scout_record(
+    session: AsyncSession,
+    pit: PitScout,
+    user: Any,
+) -> PitScout:
+    payload = _model_dump(pit)
+    user_payload = _normalize_user_payload(user)
+
+    pit_model, _season, user_id, membership, event_key = await _prepare_pit_payload(
+        session, user_payload, payload
+    )
+
+    team_number = payload.get("team_number")
+    if team_number is None:
+        raise HTTPException(status_code=400, detail="Team number is required to update pit scouting data")
+
+    statement = select(pit_model).where(
+        pit_model.event_key == event_key,
+        pit_model.team_number == team_number,
+        pit_model.user_id == user_id,
+    )
+
+    result = await session.execute(statement)
+    stored_record = result.scalars().first()
+
+    if stored_record is None:
+        raise HTTPException(status_code=404, detail="Pit scouting record not found for this team")
+
+    stored_payload = _model_dump(stored_record)
+    merged_payload = {**stored_payload, **payload}
+    merged_payload["user_id"] = user_id
+    merged_payload["organization_id"] = membership.organization_id
+    merged_payload["notes"] = merged_payload.get("notes") or ""
+
+    try:
+        typed_pit = cast(PitScout, _model_validate(pit_model, merged_payload))
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="Invalid pit scouting data for this event") from exc
+
+    valid_fields = set(_get_model_field_names(pit_model))
+    protected_fields = {"event_key", "team_number", "user_id", "organization_id"}
+
+    for field_name in valid_fields:
+        if field_name in protected_fields:
+            continue
+        setattr(stored_record, field_name, getattr(typed_pit, field_name))
+
+    extra_fields = getattr(typed_pit, "model_extra", None)
+    if isinstance(extra_fields, dict):
+        for field_name, value in extra_fields.items():
+            if field_name in protected_fields:
+                continue
+            setattr(stored_record, field_name, value)
+
+    session.add(stored_record)
+    await session.commit()
+    await session.refresh(stored_record)
+
+    return stored_record
+
+
+async def delete_pit_scout_record(
+    session: AsyncSession,
+    request: PitScoutDeleteRequest,
+    user: Any,
+) -> None:
+    user_payload = _normalize_user_payload(user)
+    payload = {
+        "season": request.season,
+        "event_key": request.event_key,
+        "team_number": request.team_number,
+    }
+
+    pit_model, _season, user_id, membership, event_key = await _prepare_pit_payload(
+        session, user_payload, payload
+    )
+
+    team_number = payload.get("team_number")
+    if team_number is None:
+        raise HTTPException(status_code=400, detail="Team number is required to delete pit scouting data")
+
+    statement = select(pit_model).where(
+        pit_model.event_key == event_key,
+        pit_model.team_number == team_number,
+        pit_model.user_id == user_id,
+    )
+
+    result = await session.execute(statement)
+    record = result.scalars().first()
+
+    if record is None:
+        raise HTTPException(status_code=404, detail="Pit scouting record not found for this team")
+
+    await session.delete(record)
+    await session.commit()
 
 
 async def update_tba_match_data_for_pending_alliances(

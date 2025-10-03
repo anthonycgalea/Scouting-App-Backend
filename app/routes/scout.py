@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlmodel.ext.asyncio.session import AsyncSession
 from auth.dependencies import get_current_user
 from db.database import get_session
@@ -7,7 +7,7 @@ from uuid import UUID
 
 from sqlmodel import select
 
-from models import DataValidation, MatchData, Season, ValidationStatus
+from models import DataValidation, MatchData, PitScout, Season, ValidationStatus
 from services.event import MATCH_DATA_MODELS_BY_YEAR
 
 router = APIRouter(
@@ -22,10 +22,15 @@ from services.scout import (
     batch_submit_match,
     batch_update_data_validations,
     batch_update_match,
+    create_pit_scout_record,
+    delete_pit_scout_record,
     get_already_scouted_matches,
     get_data_validations_for_active_event,
+    get_pit_scout_records,
+    PitScoutDeleteRequest,
     submit_scouted_match,
     update_scouted_match,
+    update_pit_scout_record,
     update_tba_match_data_for_pending_alliances,
 )
 
@@ -127,6 +132,43 @@ async def update_tba_data(
     session: AsyncSession = Depends(get_session),
 ):
     return await update_tba_match_data_for_pending_alliances(session, user)
+
+
+@router.get("/pit", response_model=List[PitScout])
+async def list_pit_scout_records(
+    team_number: Optional[int] = Query(default=None, alias="teamNumber"),
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await get_pit_scout_records(session, user, team_number=team_number)
+
+
+@router.post("/pit", response_model=PitScout, status_code=201)
+async def create_pit_scout_entry(
+    pit: PitScout,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await create_pit_scout_record(session, pit, user)
+
+
+@router.patch("/pit", response_model=PitScout)
+async def update_pit_scout_entry(
+    pit: PitScout,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await update_pit_scout_record(session, pit, user)
+
+
+@router.delete("/pit", status_code=204)
+async def delete_pit_scout_entry(
+    request: PitScoutDeleteRequest,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await delete_pit_scout_record(session, request, user)
+
 
 @router.post("/matches")
 async def get_scouted_matches(

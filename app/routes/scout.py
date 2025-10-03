@@ -136,11 +136,14 @@ async def update_tba_data(
     return await update_tba_match_data_for_pending_alliances(session, user)
 
 
-pit_scout_response_types: List[Type[PitScout]] = [PitScout]
+pit_scout_response_types: List[Type[PitScout]] = []
 
 for pit_model in PIT_SCOUT_MODELS_BY_YEAR.values():
     if pit_model not in pit_scout_response_types:
         pit_scout_response_types.append(pit_model)
+
+if PitScout not in pit_scout_response_types:
+    pit_scout_response_types.append(PitScout)
 
 PitScoutResponse = reduce(
     lambda accumulated, next_model: accumulated | next_model,

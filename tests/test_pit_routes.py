@@ -105,9 +105,7 @@ def test_pit_scout_crud_flow(pit_client):
     client, data = pit_client
 
     pit_payload = {
-        "season": data["season_id"],
         "team_number": data["team_number"],
-        "event_key": data["event_key"],
         "notes": "Initial pit notes",
         "robot_weight": 120,
         "drivetrain": "SWERVE",
@@ -121,12 +119,15 @@ def test_pit_scout_crud_flow(pit_client):
     created = create_response.json()
     assert created["team_number"] == data["team_number"]
     assert created["drivetrain"] == "SWERVE"
+    assert created["event_key"] == data["event_key"]
+    assert created["season"] == data["season_id"]
 
     list_response = client.get("/scout/pit")
     assert list_response.status_code == 200
     records = list_response.json()
     assert len(records) == 1
     assert records[0]["autoCoralCount"] == 3
+    assert records[0]["event_key"] == data["event_key"]
 
     update_payload = {**pit_payload, "autoCoralCount": 4, "teleNotes": "Updated tele notes"}
     update_response = client.patch("/scout/pit", json=update_payload)
@@ -134,13 +135,10 @@ def test_pit_scout_crud_flow(pit_client):
     updated = update_response.json()
     assert updated["autoCoralCount"] == 4
     assert updated["teleNotes"] == "Updated tele notes"
+    assert updated["event_key"] == data["event_key"]
+    assert updated["season"] == data["season_id"]
 
-    delete_payload = {
-        "season": pit_payload["season"],
-        "team_number": pit_payload["team_number"],
-        "event_key": pit_payload["event_key"],
-    }
-    delete_response = client.request("DELETE", "/scout/pit", json=delete_payload)
+    delete_response = client.request("DELETE", "/scout/pit", json={"team_number": pit_payload["team_number"]})
     assert delete_response.status_code == 204
 
     final_list = client.get("/scout/pit")

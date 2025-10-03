@@ -1,7 +1,7 @@
 import os
 from collections import defaultdict
 from enum import Enum as PyEnum
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Callable, Sequence, TypeVar, cast
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Callable, Sequence, TypeVar, Union, cast
 
 import httpx
 from fastapi import HTTPException
@@ -35,6 +35,7 @@ from services.event import (
     get_active_event_key_for_user,
     get_event_or_404,
 )
+from services.season import get_season_by_year_or_404
 
 TBA_API_BASE_URL = "https://www.thebluealliance.com/api/v3"
 TBA_API_KEY_ENV_VAR = "TBA_API_KEY"
@@ -83,6 +84,13 @@ def _model_dump(instance: SQLModel) -> Dict[str, Any]:
                 continue
             data[key] = value
     return data
+
+
+def _coerce_payload(data: Union[SQLModel, Dict[str, Any]]) -> Dict[str, Any]:
+    if isinstance(data, dict):
+        return dict(data)
+
+    return _model_dump(data)
 
 
 def _normalize_user_payload(user: Any) -> Dict[str, Any]:
@@ -671,9 +679,9 @@ async def get_already_scouted_matches(
 
 
 class PitScoutDeleteRequest(SQLModel):
-    season: int
     team_number: int
-    event_key: str
+    season: Optional[int] = None
+    event_key: Optional[str] = None
 
 
 async def _normalize_user_id(user_payload: Dict[str, Any]) -> UUID:
@@ -755,11 +763,13 @@ async def _prepare_pit_payload(
 ) -> tuple[type[PitScout], Season, UUID, UserOrganization, str]:
     event_key = await get_active_event_key_for_user(session, user_payload)
 
-    if payload.get("event_key") != event_key:
+    incoming_event_key = payload.get("event_key")
+    if incoming_event_key is not None and incoming_event_key != event_key:
         raise HTTPException(
             status_code=400,
             detail="Pit scouting event does not match the active event for this user",
         )
+    payload["event_key"] = event_key
 
     membership = await _get_user_membership_or_404(session, user_payload)
     user_id = await _normalize_user_id(user_payload)
@@ -795,20 +805,22 @@ async def _prepare_pit_payload(
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail="Invalid team number provided for pit scouting data") from exc
 
+    event = await get_event_or_404(session, event_key)
+
     season_id = payload.get("season")
     if season_id is None:
-        raise HTTPException(status_code=400, detail="Season is required for pit scouting records")
+        season = await get_season_by_year_or_404(session, event.year)
+        payload["season"] = season.id
+    else:
+        season = await session.get(Season, season_id)
+        if season is None:
+            raise HTTPException(status_code=404, detail="Season not found for provided pit scouting data")
 
-    season = await session.get(Season, season_id)
-    if season is None:
-        raise HTTPException(status_code=404, detail="Season not found for provided pit scouting data")
-
-    event = await get_event_or_404(session, event_key)
-    if season.year != event.year:
-        raise HTTPException(
-            status_code=400,
-            detail="Pit scouting season does not match the active event year",
-        )
+        if season.year != event.year:
+            raise HTTPException(
+                status_code=400,
+                detail="Pit scouting season does not match the active event year",
+            )
 
     pit_model = _get_pit_model_for_event(event.year)
 
@@ -819,10 +831,10 @@ async def _prepare_pit_payload(
 
 async def create_pit_scout_record(
     session: AsyncSession,
-    pit: PitScout,
+    pit: Union[Dict[str, Any], PitScout],
     user: Any,
 ) -> PitScout:
-    payload = _model_dump(pit)
+    payload = _coerce_payload(pit)
     user_payload = _normalize_user_payload(user)
 
     pit_model, _season, user_id, _membership, event_key = await _prepare_pit_payload(
@@ -858,10 +870,10 @@ async def create_pit_scout_record(
 
 async def update_pit_scout_record(
     session: AsyncSession,
-    pit: PitScout,
+    pit: Union[Dict[str, Any], PitScout],
     user: Any,
 ) -> PitScout:
-    payload = _model_dump(pit)
+    payload = _coerce_payload(pit)
     user_payload = _normalize_user_payload(user)
 
     pit_model, _season, user_id, membership, event_key = await _prepare_pit_payload(

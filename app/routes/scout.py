@@ -2,13 +2,15 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlmodel.ext.asyncio.session import AsyncSession
 from auth.dependencies import get_current_user
 from db.database import get_session
-from typing import Any, Dict, List, Optional
+from functools import reduce
+from typing import Any, Dict, List, Optional, Type
 from uuid import UUID
 
 from sqlmodel import select
 
 from models import DataValidation, MatchData, PitScout, Season, ValidationStatus
 from services.event import MATCH_DATA_MODELS_BY_YEAR
+from services.scout import PIT_SCOUT_MODELS_BY_YEAR
 
 router = APIRouter(
     prefix="/scout",
@@ -134,7 +136,20 @@ async def update_tba_data(
     return await update_tba_match_data_for_pending_alliances(session, user)
 
 
-@router.get("/pit", response_model=List[PitScout])
+pit_scout_response_types: List[Type[PitScout]] = [PitScout]
+
+for pit_model in PIT_SCOUT_MODELS_BY_YEAR.values():
+    if pit_model not in pit_scout_response_types:
+        pit_scout_response_types.append(pit_model)
+
+PitScoutResponse = reduce(
+    lambda accumulated, next_model: accumulated | next_model,
+    pit_scout_response_types[1:],
+    pit_scout_response_types[0],
+)
+
+
+@router.get("/pit", response_model=List[PitScoutResponse])
 async def list_pit_scout_records(
     team_number: Optional[int] = Query(default=None, alias="teamNumber"),
     user=Depends(get_current_user),
@@ -143,7 +158,7 @@ async def list_pit_scout_records(
     return await get_pit_scout_records(session, user, team_number=team_number)
 
 
-@router.post("/pit", response_model=PitScout, status_code=201)
+@router.post("/pit", response_model=PitScoutResponse, status_code=201)
 async def create_pit_scout_entry(
     pit: Dict[str, Any] = Body(...),
     user=Depends(get_current_user),
@@ -152,7 +167,7 @@ async def create_pit_scout_entry(
     return await create_pit_scout_record(session, pit, user)
 
 
-@router.patch("/pit", response_model=PitScout)
+@router.patch("/pit", response_model=PitScoutResponse)
 async def update_pit_scout_entry(
     pit: Dict[str, Any] = Body(...),
     user=Depends(get_current_user),

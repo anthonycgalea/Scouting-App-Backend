@@ -887,7 +887,7 @@ async def update_pit_scout_record(
     statement = select(pit_model).where(
         pit_model.event_key == event_key,
         pit_model.team_number == team_number,
-        pit_model.user_id == user_id,
+        pit_model.organization_id == membership.organization_id,
     )
 
     result = await session.execute(statement)
@@ -896,9 +896,12 @@ async def update_pit_scout_record(
     if stored_record is None:
         raise HTTPException(status_code=404, detail="Pit scouting record not found for this team")
 
+    if stored_record.organization_id != membership.organization_id:
+        raise HTTPException(status_code=403, detail="Pit scouting record does not belong to this organization")
+
     stored_payload = _model_dump(stored_record)
     merged_payload = {**stored_payload, **payload}
-    merged_payload["user_id"] = user_id
+    merged_payload["user_id"] = stored_record.user_id
     merged_payload["organization_id"] = membership.organization_id
     merged_payload["notes"] = merged_payload.get("notes") or ""
 

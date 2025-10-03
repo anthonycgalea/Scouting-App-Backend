@@ -5,7 +5,7 @@ from enum import Enum
 from uuid import UUID
 from .pit_scout import PitScout
 
-class Endgame2025(str, Enum):
+class PitEndgame2025(str, Enum):
     NONE = "NONE"
     PARK = "PARK"
     SHALLOW = "SHALLOW"
@@ -33,5 +33,5 @@ class PitScout2025(PitScout, table=True):
     teleAlgaeNet: bool = Field(default=False)
     teleAlgaeProcessor: bool = Field(default=False)
     teleNotes: str = Field(default="")
-    endgame: Endgame2025 = Field(default=Endgame2025.NONE)
+    endgame: PitEndgame2025 = Field(default=PitEndgame2025.NONE)
     overallNotes: str = Field(default="")

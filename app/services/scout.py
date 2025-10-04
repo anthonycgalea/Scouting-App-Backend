@@ -1,7 +1,7 @@
 import os
 from collections import defaultdict
 from enum import Enum as PyEnum
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Callable, Sequence, TypeVar, Union, cast
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Callable, Sequence, Set, TypeVar, Union, cast
 
 import httpx
 from fastapi import HTTPException
@@ -445,9 +445,15 @@ async def _calculate_combined_match_data(
 
 
 def _tba_matches_combined_data(
-    tba_data: Dict[str, Any], combined_data: Dict[str, Any]
+    event_year: int, tba_data: Dict[str, Any], combined_data: Dict[str, Any]
 ) -> bool:
+    ignored_fields_by_year: Dict[int, Set[str]] = {2025: {"net", "processor"}}
+    ignored_fields = ignored_fields_by_year.get(event_year, set())
+
     for field, tba_value in tba_data.items():
+        if field in ignored_fields:
+            continue
+
         combined_value = combined_data.get(field)
 
         if isinstance(tba_value, PyEnum):
@@ -1127,7 +1133,7 @@ async def update_tba_match_data_for_pending_alliances(
                 validations_status = ValidationStatus.NEEDS_REVIEW
                 if (
                     combined_data is not None
-                    and _tba_matches_combined_data(parsed, combined_data)
+                    and _tba_matches_combined_data(event.year, parsed, combined_data)
                 ):
                     validations_status = ValidationStatus.VALID
 

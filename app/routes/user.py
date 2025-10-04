@@ -1,8 +1,9 @@
+from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import SQLModel, select
+from sqlmodel import Field, SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from auth.dependencies import get_current_user
@@ -39,9 +40,52 @@ class UpdateUserOrganizationResponse(SQLModel):
     user_organization_id: int
 
 
+class UpdateUserInfoRequest(SQLModel):
+    display_name: str = Field(min_length=1)
+
+
 @router.get("/user/info")
 async def get_my_profile(user=Depends(get_current_user)):
     return user
+
+
+@router.patch("/user/info")
+async def update_my_profile(
+    update: UpdateUserInfoRequest,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    user_id = user.get("id")
+    if user_id is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not authenticated")
+
+    if isinstance(user_id, str):
+        user_id = UUID(user_id)
+
+    db_user = await session.get(User, user_id)
+    if db_user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    display_name = update.display_name.strip()
+    if not display_name:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Display name cannot be empty",
+        )
+
+    db_user.display_name = display_name
+    db_user.updated_at = datetime.utcnow()
+
+    session.add(db_user)
+    await session.commit()
+    await session.refresh(db_user)
+
+    return {
+        "id": str(db_user.id),
+        "displayName": db_user.display_name,
+        "email": db_user.email,
+        "user_org": db_user.logged_in_user_org,
+    }
 
 
 @router.get(

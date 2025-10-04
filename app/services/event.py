@@ -1,12 +1,13 @@
 import os
 from enum import Enum
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Sequence
+from math import sqrt
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import UUID
 
 import httpx
 from fastapi import HTTPException
-from sqlmodel import SQLModel, delete, select
+from sqlmodel import Field, SQLModel, delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from models import (
@@ -90,6 +91,80 @@ class TBAMatchDataRequest(SQLModel):
     matchLevel: str
     teamNumber: int
     alliance: Alliance
+
+
+class MetricStatistics(SQLModel):
+    average: float = 0.0
+    standard_deviation: float = 0.0
+
+
+class PhaseMetrics(SQLModel):
+    level4: MetricStatistics = Field(default_factory=MetricStatistics)
+    level3: MetricStatistics = Field(default_factory=MetricStatistics)
+    level2: MetricStatistics = Field(default_factory=MetricStatistics)
+    level1: MetricStatistics = Field(default_factory=MetricStatistics)
+    net: MetricStatistics = Field(default_factory=MetricStatistics)
+    processor: MetricStatistics = Field(default_factory=MetricStatistics)
+    total_points: MetricStatistics = Field(default_factory=MetricStatistics)
+
+
+class TeamMatchPreview(SQLModel):
+    team_number: int
+    auto: PhaseMetrics
+    teleop: PhaseMetrics
+    endgame: MetricStatistics
+    total_points: MetricStatistics
+
+
+class LevelAverages(SQLModel):
+    level4: float = 0.0
+    level3: float = 0.0
+    level2: float = 0.0
+    level1: float = 0.0
+
+
+class AllianceLevelAverages(SQLModel):
+    auto: LevelAverages
+    teleop: LevelAverages
+    adjusted: LevelAverages
+
+
+class AllianceMatchPreview(SQLModel):
+    teams: List[TeamMatchPreview]
+    alliance_level_averages: AllianceLevelAverages
+
+
+class MatchPreviewResponse(SQLModel):
+    red: AllianceMatchPreview
+    blue: AllianceMatchPreview
+
+
+DEFAULT_AUTO_WEIGHTS: Dict[str, float] = {
+    "al4c": 7.0,
+    "al3c": 6.0,
+    "al2c": 4.0,
+    "al1c": 3.0,
+    "aNet": 4.0,
+    "aProcessor": 2.0,
+}
+
+
+DEFAULT_TELEOP_WEIGHTS: Dict[str, float] = {
+    "tl4c": 5.0,
+    "tl3c": 4.0,
+    "tl2c": 3.0,
+    "tl1c": 2.0,
+    "tNet": 4.0,
+    "tProcessor": 2.0,
+}
+
+
+DEFAULT_ENDGAME_POINTS: Dict[str, float] = {
+    "NONE": 0.0,
+    "PARK": 2.0,
+    "SHALLOW": 6.0,
+    "DEEP": 12.0,
+}
 
 
 
@@ -182,6 +257,403 @@ async def get_tba_match_data_for_match(
         raise HTTPException(status_code=404, detail="TBA match data not found for this match")
 
     return record.model_dump()
+
+
+PHASE_METRIC_KEYS: Tuple[str, ...] = (
+    "level4",
+    "level3",
+    "level2",
+    "level1",
+    "net",
+    "processor",
+    "total_points",
+)
+
+
+LEVEL_KEYS: Tuple[str, ...] = (
+    "level4",
+    "level3",
+    "level2",
+    "level1",
+)
+
+
+AUTO_LEVEL_FIELDS: Tuple[Tuple[str, str], ...] = (
+    ("al4c", "level4"),
+    ("al3c", "level3"),
+    ("al2c", "level2"),
+    ("al1c", "level1"),
+)
+
+
+TELEOP_LEVEL_FIELDS: Tuple[Tuple[str, str], ...] = (
+    ("tl4c", "level4"),
+    ("tl3c", "level3"),
+    ("tl2c", "level2"),
+    ("tl1c", "level1"),
+)
+
+
+AUTO_ADDITIONAL_FIELDS: Tuple[Tuple[str, str], ...] = (
+    ("aNet", "net"),
+    ("aProcessor", "processor"),
+)
+
+
+TELEOP_ADDITIONAL_FIELDS: Tuple[Tuple[str, str], ...] = (
+    ("tNet", "net"),
+    ("tProcessor", "processor"),
+)
+
+
+MATCH_MODEL_AUTO_WEIGHTS_ATTR = "AUTO_POINT_WEIGHTS"
+MATCH_MODEL_TELEOP_WEIGHTS_ATTR = "TELEOP_POINT_WEIGHTS"
+MATCH_MODEL_ENDGAME_POINTS_ATTR = "ENDGAME_POINT_VALUES"
+
+
+def _calculate_average(values: Sequence[float]) -> float:
+    if not values:
+        return 0.0
+    return sum(values) / len(values)
+
+
+def _calculate_std_dev(values: Sequence[float], average: Optional[float] = None) -> float:
+    if not values or len(values) <= 1:
+        return 0.0
+
+    if average is None:
+        average = _calculate_average(values)
+
+    variance = sum((value - average) ** 2 for value in values) / len(values)
+    if variance <= 0:
+        return 0.0
+    return sqrt(variance)
+
+
+def _calculate_metric_statistics(values: Sequence[float]) -> MetricStatistics:
+    if not values:
+        return MetricStatistics()
+
+    average = _calculate_average(values)
+    std_dev = _calculate_std_dev(values, average)
+    return MetricStatistics(average=average, standard_deviation=std_dev)
+
+
+def _initialize_phase_metric_lists() -> Dict[str, List[float]]:
+    return {key: [] for key in PHASE_METRIC_KEYS}
+
+
+def _initialize_count_lists(field_mapping: Tuple[Tuple[str, str], ...]) -> Dict[str, List[float]]:
+    return {field: [] for field, _ in field_mapping}
+
+
+def _resolve_weight_mapping(
+    match_model: type[SQLModel],
+    attribute_name: str,
+    default: Dict[str, float],
+) -> Dict[str, float]:
+    mapping = getattr(match_model, attribute_name, None)
+    if isinstance(mapping, dict) and mapping:
+        resolved: Dict[str, float] = {}
+        for key, value in mapping.items():
+            try:
+                resolved[str(key)] = float(value)
+            except (TypeError, ValueError):
+                continue
+        if resolved:
+            return resolved
+    return {key: float(value) for key, value in default.items()}
+
+
+def _resolve_endgame_points_mapping(
+    match_model: type[SQLModel],
+) -> Dict[str, float]:
+    mapping = getattr(match_model, MATCH_MODEL_ENDGAME_POINTS_ATTR, None)
+    if isinstance(mapping, dict) and mapping:
+        resolved: Dict[str, float] = {}
+        for key, value in mapping.items():
+            try:
+                resolved[str(key).upper()] = float(value)
+            except (TypeError, ValueError):
+                continue
+        if resolved:
+            return resolved
+    return {key: float(value) for key, value in DEFAULT_ENDGAME_POINTS.items()}
+
+
+def _to_float(value: Any) -> float:
+    if value is None:
+        return 0.0
+    if isinstance(value, Enum):
+        value = value.value
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _extract_field_value(record: SQLModel, field_name: str) -> float:
+    return _to_float(getattr(record, field_name, 0))
+
+
+def _calculate_endgame_points(value: Any, mapping: Dict[str, float]) -> float:
+    if isinstance(value, Enum):
+        value = value.value
+    if value is None:
+        return 0.0
+    normalized = str(value).upper()
+    return float(mapping.get(normalized, 0.0))
+
+
+def _phase_metrics_from_lists(metric_lists: Dict[str, List[float]]) -> PhaseMetrics:
+    return PhaseMetrics(
+        level4=_calculate_metric_statistics(metric_lists["level4"]),
+        level3=_calculate_metric_statistics(metric_lists["level3"]),
+        level2=_calculate_metric_statistics(metric_lists["level2"]),
+        level1=_calculate_metric_statistics(metric_lists["level1"]),
+        net=_calculate_metric_statistics(metric_lists["net"]),
+        processor=_calculate_metric_statistics(metric_lists["processor"]),
+        total_points=_calculate_metric_statistics(metric_lists["total_points"]),
+    )
+
+
+def _average_counts(
+    count_lists: Dict[str, List[float]],
+    field_mapping: Tuple[Tuple[str, str], ...],
+) -> Dict[str, float]:
+    return {
+        alias: _calculate_average(count_lists.get(field, []))
+        for field, alias in field_mapping
+    }
+
+
+def _build_team_preview_from_records(
+    records: Sequence[SQLModel],
+    team_number: int,
+    auto_weights: Dict[str, float],
+    teleop_weights: Dict[str, float],
+    endgame_points: Dict[str, float],
+) -> Tuple[TeamMatchPreview, Dict[str, Dict[str, float]]]:
+    auto_metric_lists = _initialize_phase_metric_lists()
+    teleop_metric_lists = _initialize_phase_metric_lists()
+    auto_count_lists = _initialize_count_lists(AUTO_LEVEL_FIELDS)
+    teleop_count_lists = _initialize_count_lists(TELEOP_LEVEL_FIELDS)
+    endgame_values: List[float] = []
+    total_match_points: List[float] = []
+
+    for record in records:
+        auto_total = 0.0
+        teleop_total = 0.0
+
+        for field, alias in AUTO_LEVEL_FIELDS:
+            count = _extract_field_value(record, field)
+            auto_count_lists[field].append(count)
+            auto_metric_lists[alias].append(count)
+            points = count * auto_weights.get(field, 0.0)
+            auto_total += points
+
+        for field, alias in AUTO_ADDITIONAL_FIELDS:
+            count = _extract_field_value(record, field)
+            auto_metric_lists[alias].append(count)
+            auto_total += count * auto_weights.get(field, 0.0)
+
+        auto_metric_lists["total_points"].append(auto_total)
+
+        for field, alias in TELEOP_LEVEL_FIELDS:
+            count = _extract_field_value(record, field)
+            teleop_count_lists[field].append(count)
+            teleop_metric_lists[alias].append(count)
+            points = count * teleop_weights.get(field, 0.0)
+            teleop_total += points
+
+        for field, alias in TELEOP_ADDITIONAL_FIELDS:
+            count = _extract_field_value(record, field)
+            teleop_metric_lists[alias].append(count)
+            teleop_total += count * teleop_weights.get(field, 0.0)
+
+        teleop_metric_lists["total_points"].append(teleop_total)
+
+        endgame_value = _calculate_endgame_points(getattr(record, "endgame", None), endgame_points)
+        endgame_values.append(endgame_value)
+        total_match_points.append(auto_total + teleop_total + endgame_value)
+
+    team_preview = TeamMatchPreview(
+        team_number=team_number,
+        auto=_phase_metrics_from_lists(auto_metric_lists),
+        teleop=_phase_metrics_from_lists(teleop_metric_lists),
+        endgame=_calculate_metric_statistics(endgame_values),
+        total_points=_calculate_metric_statistics(total_match_points),
+    )
+
+    counts_average = {
+        "auto": _average_counts(auto_count_lists, AUTO_LEVEL_FIELDS),
+        "teleop": _average_counts(teleop_count_lists, TELEOP_LEVEL_FIELDS),
+    }
+
+    return team_preview, counts_average
+
+
+def _apply_level_capacity(
+    auto_levels: Dict[str, float],
+    teleop_levels: Dict[str, float],
+) -> Dict[str, float]:
+    level_order = list(LEVEL_KEYS)
+    capacity = {"level4": 12.0, "level3": 12.0, "level2": 12.0, "level1": float("inf")}
+
+    auto_remaining = {level: float(auto_levels.get(level, 0.0)) for level in level_order}
+    teleop_remaining = {level: float(teleop_levels.get(level, 0.0)) for level in level_order}
+    placed_auto = {level: 0.0 for level in level_order}
+    placed_teleop = {level: 0.0 for level in level_order}
+
+    for index, level in enumerate(level_order):
+        level_capacity = capacity[level]
+
+        auto_to_place = min(auto_remaining[level], level_capacity)
+        placed_auto[level] += auto_to_place
+        level_capacity -= auto_to_place
+        leftover_auto = auto_remaining[level] - auto_to_place
+
+        teleop_to_place = min(teleop_remaining[level], level_capacity)
+        placed_teleop[level] += teleop_to_place
+        level_capacity -= teleop_to_place
+        leftover_teleop = teleop_remaining[level] - teleop_to_place
+
+        if index + 1 < len(level_order):
+            next_level = level_order[index + 1]
+            auto_remaining[next_level] += leftover_auto
+            teleop_remaining[next_level] += leftover_teleop
+        else:
+            placed_auto[level] += leftover_auto
+            placed_teleop[level] += leftover_teleop
+
+    return {
+        level: placed_auto[level] + placed_teleop[level]
+        for level in level_order
+    }
+
+
+def _calculate_alliance_level_averages(
+    team_level_counts: Iterable[Dict[str, Dict[str, float]]],
+) -> AllianceLevelAverages:
+    auto_totals = {level: 0.0 for level in LEVEL_KEYS}
+    teleop_totals = {level: 0.0 for level in LEVEL_KEYS}
+
+    for counts in team_level_counts:
+        auto_counts = counts.get("auto", {})
+        teleop_counts = counts.get("teleop", {})
+        for level in LEVEL_KEYS:
+            auto_totals[level] += float(auto_counts.get(level, 0.0))
+            teleop_totals[level] += float(teleop_counts.get(level, 0.0))
+
+    adjusted_totals = _apply_level_capacity(auto_totals, teleop_totals)
+
+    return AllianceLevelAverages(
+        auto=LevelAverages(**auto_totals),
+        teleop=LevelAverages(**teleop_totals),
+        adjusted=LevelAverages(**adjusted_totals),
+    )
+
+
+async def _fetch_team_records(
+    session: AsyncSession,
+    match_model: type[SQLModel],
+    event_key: str,
+    organization_id: int,
+    team_number: int,
+) -> List[SQLModel]:
+    statement = select(match_model).where(
+        match_model.event_key == event_key,
+        match_model.organization_id == organization_id,
+        match_model.team_number == team_number,
+    )
+    result = await session.execute(statement)
+    return list(result.scalars().all())
+
+
+async def _build_alliance_preview(
+    session: AsyncSession,
+    match_model: type[SQLModel],
+    event_key: str,
+    organization_id: int,
+    team_numbers: Sequence[int],
+    auto_weights: Dict[str, float],
+    teleop_weights: Dict[str, float],
+    endgame_points: Dict[str, float],
+) -> AllianceMatchPreview:
+    teams: List[TeamMatchPreview] = []
+    level_counts: List[Dict[str, Dict[str, float]]] = []
+
+    for team_number in team_numbers:
+        records = await _fetch_team_records(
+            session,
+            match_model,
+            event_key,
+            organization_id,
+            int(team_number),
+        )
+        team_preview, counts_average = _build_team_preview_from_records(
+            records,
+            int(team_number),
+            auto_weights,
+            teleop_weights,
+            endgame_points,
+        )
+        teams.append(team_preview)
+        level_counts.append(counts_average)
+
+    alliance_level_averages = _calculate_alliance_level_averages(level_counts)
+    return AllianceMatchPreview(teams=teams, alliance_level_averages=alliance_level_averages)
+
+
+async def get_match_preview(
+    session: AsyncSession,
+    user: dict,
+    match_number: int,
+    match_level: str,
+) -> MatchPreviewResponse:
+    event_key = await get_active_event_key_for_user(session, user)
+    event = await get_event_or_404(session, event_key)
+    membership = await get_user_membership_or_404(session, user)
+
+    match = await get_match_or_404(session, event_key, match_number, match_level)
+
+    match_model = MATCH_DATA_MODELS_BY_YEAR.get(event.year)
+    if match_model is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Match data is not available for this event",
+        )
+
+    auto_weights = _resolve_weight_mapping(match_model, MATCH_MODEL_AUTO_WEIGHTS_ATTR, DEFAULT_AUTO_WEIGHTS)
+    teleop_weights = _resolve_weight_mapping(match_model, MATCH_MODEL_TELEOP_WEIGHTS_ATTR, DEFAULT_TELEOP_WEIGHTS)
+    endgame_points = _resolve_endgame_points_mapping(match_model)
+
+    red_teams = [match.red1_id, match.red2_id, match.red3_id]
+    blue_teams = [match.blue1_id, match.blue2_id, match.blue3_id]
+
+    red_preview = await _build_alliance_preview(
+        session,
+        match_model,
+        event_key,
+        membership.organization_id,
+        red_teams,
+        auto_weights,
+        teleop_weights,
+        endgame_points,
+    )
+
+    blue_preview = await _build_alliance_preview(
+        session,
+        match_model,
+        event_key,
+        membership.organization_id,
+        blue_teams,
+        auto_weights,
+        teleop_weights,
+        endgame_points,
+    )
+
+    return MatchPreviewResponse(red=red_preview, blue=blue_preview)
 
 
 def _get_model_field_order(model: type[SQLModel]) -> List[str]:

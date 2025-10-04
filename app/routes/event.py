@@ -24,6 +24,16 @@ async def get_single_match(
     return await get_match_or_404(session, event_code, matchNumber, matchLevel)
 
 
+@router.get("/match/{matchLevel}/{matchNumber}/preview", tags=["Scout"])
+async def get_match_preview_endpoint(
+    matchNumber: int,
+    matchLevel: str,
+    session: AsyncSession = Depends(get_session),
+    user=Depends(get_current_user),
+) -> MatchPreviewResponse:
+    return await get_match_preview(session, user, matchNumber, matchLevel)
+
+
 @router.get("/matches")
 async def get_match_schedule(
     session: AsyncSession = Depends(get_session),

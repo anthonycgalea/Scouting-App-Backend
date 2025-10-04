@@ -458,6 +458,32 @@ def _tba_matches_combined_data(
 
         if isinstance(tba_value, PyEnum):
             if combined_value != tba_value:
+                if (
+                    event_year == 2025
+                    and field.startswith("bot")
+                    and field.endswith("endgame")
+                ):
+                    combined_enum = combined_value
+                    if isinstance(combined_enum, str):
+                        try:
+                            combined_enum = TBAEndgame2025(combined_enum)
+                        except ValueError:
+                            combined_enum = None
+
+                    tba_enum = tba_value
+                    if isinstance(tba_enum, str):
+                        try:
+                            tba_enum = TBAEndgame2025(tba_enum)
+                        except ValueError:
+                            tba_enum = None
+
+                    acceptable = {TBAEndgame2025.PARK, TBAEndgame2025.NONE}
+                    if (
+                        isinstance(combined_enum, PyEnum)
+                        and isinstance(tba_enum, PyEnum)
+                        and {combined_enum, tba_enum}.issubset(acceptable)
+                    ):
+                        continue
                 return False
             continue
 

@@ -18,6 +18,7 @@ from models import (
     MatchData,
     MatchData2025,
     MatchData2026,
+    Prescout2025,
     MatchSchedule,
     PitScout,
     PitScout2025,
@@ -48,6 +49,10 @@ TBA_MATCH_DATA_MODELS_BY_YEAR: Dict[int, type[TBAMatchData]] = {
 
 PIT_SCOUT_MODELS_BY_YEAR: Dict[int, type[PitScout]] = {
     2025: PitScout2025,
+}
+
+PRESCOUT_MODELS_BY_YEAR: Dict[int, type[MatchData]] = {
+    2025: Prescout2025,
 }
 
 TBA_BREAKDOWN_PARSERS_BY_YEAR: Dict[
@@ -710,6 +715,38 @@ async def get_already_scouted_matches(
     return result.scalars().all()
 
 
+async def get_prescout_records(
+    session: AsyncSession,
+    user: dict,
+    *,
+    team_number: Optional[int] = None,
+):
+    user_payload = _normalize_user_payload(user)
+
+    event_key = await get_active_event_key_for_user(session, user_payload)
+    event = await get_event_or_404(session, event_key)
+
+    membership = await _get_user_membership_or_404(session, user_payload)
+
+    prescout_model = PRESCOUT_MODELS_BY_YEAR.get(event.year)
+    if prescout_model is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Prescouting is not available for this event",
+        )
+
+    statement = select(prescout_model).where(
+        prescout_model.event_key == event_key,
+        prescout_model.organization_id == membership.organization_id,
+    )
+
+    if team_number is not None:
+        statement = statement.where(prescout_model.team_number == team_number)
+
+    result = await session.execute(statement)
+    return result.scalars().all()
+
+
 class PitScoutDeleteRequest(SQLModel):
     team_number: int
     season: Optional[int] = None
@@ -1209,16 +1246,49 @@ async def update_scouted_match(session: AsyncSession, match: MatchData, user: Us
     session.add(stored_match)
 
 
-async def submit_scouted_match(session: AsyncSession, match: MatchData, user: User):
+async def submit_scouted_match(session: AsyncSession, match: MatchData, user: User) -> MatchData:
     #check if user is part of organization specified in match.organization_id
 
     #if user is guest, verify event code
 
     #if valid, go to switch for match submission
     if (match.season == 1): #2025 REEFSCAPE
-        await submit_2025_match(session, MatchData2025(match), user)
+        return await submit_2025_match(session, MatchData2025(match), user)
     elif (match.season == 2): #2026 REBUILT
-        await submit_2026_match(session, MatchData2026(match), user)
+        return await submit_2026_match(session, MatchData2026(match), user)
+
+    raise HTTPException(status_code=400, detail="Unsupported season for match submission")
+
+
+async def submit_prescout_record(
+    session: AsyncSession,
+    prescout: MatchData,
+    user: User,
+) -> MatchData:
+    prescout_payload = _model_dump(prescout)
+    try:
+        base_prescout = _model_validate(MatchData, prescout_payload)
+    except ValidationError as exc:  # pragma: no cover - defensive guard
+        raise HTTPException(status_code=422, detail="Invalid prescout payload") from exc
+
+    season = await session.get(Season, base_prescout.season)
+    if season is None:
+        raise HTTPException(status_code=404, detail="Season not found for provided prescout data")
+
+    prescout_model = PRESCOUT_MODELS_BY_YEAR.get(season.year)
+    if prescout_model is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Prescouting is not available for this season",
+        )
+
+    return await _submit_match_for_year(
+        session,
+        prescout,
+        user,
+        expected_year=season.year,
+        match_model=prescout_model,
+    )
 
 
 async def _submit_match_for_year(
@@ -1228,7 +1298,7 @@ async def _submit_match_for_year(
     *,
     expected_year: int,
     match_model: type[MatchData],
-) -> None:
+) -> MatchData:
     match_payload = _model_dump(match)
     try:
         base_match = _model_validate(MatchData, match_payload)
@@ -1320,9 +1390,19 @@ async def _submit_match_for_year(
             detail="Match data has already been submitted for this match",
         ) from exc
 
+    await session.refresh(typed_match)
 
-async def submit_2025_match(session: AsyncSession, match: MatchData2025, user: User) -> None:
-    await _submit_match_for_year(session, match, user, expected_year=2025, match_model=MatchData2025)
+    return typed_match
+
+
+async def submit_2025_match(session: AsyncSession, match: MatchData2025, user: User) -> MatchData:
+    return await _submit_match_for_year(
+        session,
+        match,
+        user,
+        expected_year=2025,
+        match_model=MatchData2025,
+    )
 
 
 async def _edit_match_for_year(
@@ -1462,8 +1542,14 @@ async def edit_2025_match(session: AsyncSession, match: MatchData2025, user: Use
 async def update_2025_match(session: AsyncSession, match: MatchData2025, user: User) -> None:
     await edit_2025_match(session, match, user)
 
-async def submit_2026_match(session: AsyncSession, match: MatchData2026, user: User) -> None:
-    await _submit_match_for_year(session, match, user, expected_year=2026, match_model=MatchData2026)
+async def submit_2026_match(session: AsyncSession, match: MatchData2026, user: User) -> MatchData:
+    return await _submit_match_for_year(
+        session,
+        match,
+        user,
+        expected_year=2026,
+        match_model=MatchData2026,
+    )
 
 async def edit_2026_match(session: AsyncSession, match: MatchData2026, user: User) -> MatchData2026:
     return await _edit_match_for_year(session, match, user, expected_year=2026, match_model=MatchData2026)

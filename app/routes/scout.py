@@ -27,10 +27,13 @@ from services.scout import (
     create_pit_scout_record,
     delete_pit_scout_record,
     get_already_scouted_matches,
+    get_prescout_records,
     get_data_validations_for_active_event,
     get_pit_scout_records,
     PitScoutDeleteRequest,
+    PRESCOUT_MODELS_BY_YEAR,
     submit_scouted_match,
+    submit_prescout_record,
     update_scouted_match,
     update_pit_scout_record,
     update_tba_match_data_for_pending_alliances,
@@ -152,6 +155,22 @@ PitScoutResponse = reduce(
 )
 
 
+prescout_response_types: List[Type[MatchData]] = []
+
+for prescout_model in PRESCOUT_MODELS_BY_YEAR.values():
+    if prescout_model not in prescout_response_types:
+        prescout_response_types.append(prescout_model)
+
+if MatchData not in prescout_response_types:
+    prescout_response_types.append(MatchData)
+
+PrescoutResponse = reduce(
+    lambda accumulated, next_model: accumulated | next_model,
+    prescout_response_types[1:],
+    prescout_response_types[0],
+)
+
+
 @router.get("/pit", response_model=List[PitScoutResponse])
 async def list_pit_scout_records(
     team_number: Optional[int] = Query(default=None, alias="teamNumber"),
@@ -186,6 +205,24 @@ async def delete_pit_scout_entry(
     session: AsyncSession = Depends(get_session),
 ):
     await delete_pit_scout_record(session, request, user)
+
+
+@router.get("/prescout", response_model=List[PrescoutResponse])
+async def list_prescout_records(
+    team_number: Optional[int] = Query(default=None, alias="teamNumber"),
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await get_prescout_records(session, user, team_number=team_number)
+
+
+@router.post("/prescout", response_model=PrescoutResponse, status_code=201)
+async def create_prescout_entry(
+    prescout: MatchData,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await submit_prescout_record(session, prescout, user)
 
 
 @router.post("/matches")

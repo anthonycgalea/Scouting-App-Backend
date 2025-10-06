@@ -85,9 +85,9 @@ SUPERSCOUT_BUTTON_FIELDS_BASE: List[Tuple[str, str]] = [
 SUPERSCOUT_BUTTON_FIELDS_BY_YEAR: Dict[int, List[Tuple[str, str]]] = {
     2025: [
         *SUPERSCOUT_BUTTON_FIELDS_BASE,
-        ("floor_algae", "Floor Algae"),
-        ("floor_coral", "Floor Coral"),
-        ("holds_both_pieces", "Holds Both Pieces"),
+        ("floor_algae", "Picks up Algae off Floor"),
+        ("floor_coral", "Picks up Coral off Floor"),
+        ("holds_both_pieces", "Holds Both Game Pieces"),
     ],
 }
 

@@ -23,6 +23,8 @@ from models import (
     PitScout,
     PitScout2025,
     Season,
+    SuperScoutData,
+    SuperScoutData2025,
     TBAMatchData,
     TBAMatchData2025,
     User,
@@ -53,6 +55,10 @@ PIT_SCOUT_MODELS_BY_YEAR: Dict[int, type[PitScout]] = {
 
 PRESCOUT_MODELS_BY_YEAR: Dict[int, type[MatchData]] = {
     2025: Prescout2025,
+}
+
+SUPERSCOUT_MODELS_BY_YEAR: Dict[int, type[SuperScoutData]] = {
+    2025: SuperScoutData2025,
 }
 
 TBA_BREAKDOWN_PARSERS_BY_YEAR: Dict[
@@ -747,6 +753,38 @@ async def get_prescout_records(
     return result.scalars().all()
 
 
+async def get_superscout_records(
+    session: AsyncSession,
+    user: dict,
+    *,
+    team_number: Optional[int] = None,
+) -> List[SuperScoutData]:
+    user_payload = _normalize_user_payload(user)
+
+    event_key = await get_active_event_key_for_user(session, user_payload)
+    event = await get_event_or_404(session, event_key)
+
+    membership = await _get_user_membership_or_404(session, user_payload)
+
+    superscout_model = SUPERSCOUT_MODELS_BY_YEAR.get(event.year)
+    if superscout_model is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Superscouting is not available for this event",
+        )
+
+    statement = select(superscout_model).where(
+        superscout_model.event_key == event_key,
+        superscout_model.organization_id == membership.organization_id,
+    )
+
+    if team_number is not None:
+        statement = statement.where(superscout_model.team_number == team_number)
+
+    result = await session.execute(statement)
+    return result.scalars().all()
+
+
 class PitScoutDeleteRequest(SQLModel):
     team_number: int
     season: Optional[int] = None
@@ -1289,6 +1327,124 @@ async def submit_prescout_record(
         expected_year=season.year,
         match_model=prescout_model,
     )
+
+
+async def submit_superscout_record(
+    session: AsyncSession,
+    superscout: SuperScoutData,
+    user: User,
+) -> SuperScoutData:
+    superscout_payload = _model_dump(superscout)
+    try:
+        base_superscout = cast(SuperScoutData, _model_validate(SuperScoutData, superscout_payload))
+    except ValidationError as exc:  # pragma: no cover - defensive guard
+        raise HTTPException(status_code=422, detail="Invalid superscout payload") from exc
+
+    user_id: Optional[UUID] = getattr(user, "id", None)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="User not authenticated")
+
+    if isinstance(user_id, str):
+        try:
+            user_id = UUID(user_id)
+        except ValueError as exc:  # pragma: no cover - defensive programming
+            raise HTTPException(status_code=400, detail="Invalid user identifier") from exc
+
+    membership_id: Optional[Any] = getattr(user, "logged_in_user_org", None)
+    if membership_id is None:
+        raise HTTPException(status_code=404, detail="User is not logged into an organization")
+
+    if isinstance(membership_id, str):
+        try:
+            membership_id = int(membership_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid organization membership identifier",
+            ) from exc
+
+    membership = await session.get(UserOrganization, membership_id)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Organization membership not found")
+
+    if membership.user_id != user_id:
+        raise HTTPException(status_code=403, detail="User does not belong to this organization")
+
+    if base_superscout.organization_id != membership.organization_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Superscout data does not belong to the active organization",
+        )
+
+    event = await get_event_or_404(session, base_superscout.event_key)
+
+    season = await session.get(Season, base_superscout.season)
+    if season is None:
+        raise HTTPException(status_code=404, detail="Season not found for provided superscout data")
+
+    if event.year != season.year:
+        raise HTTPException(
+            status_code=400,
+            detail="Superscout data event does not match the expected season year",
+        )
+
+    superscout_model = SUPERSCOUT_MODELS_BY_YEAR.get(season.year)
+    if superscout_model is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Superscouting is not available for this season",
+        )
+
+    superscout_user_id = getattr(base_superscout, "user_id", None)
+    if superscout_user_id and superscout_user_id != user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Superscout data user does not match the authenticated user",
+        )
+
+    payload: Dict[str, Any] = {
+        **superscout_payload,
+        "user_id": user_id,
+        "organization_id": membership.organization_id,
+    }
+    payload["notes"] = payload.get("notes") or ""
+    payload.pop("timestamp", None)
+
+    try:
+        typed_superscout = cast(SuperScoutData, _model_validate(superscout_model, payload))
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="Invalid superscout data for this season") from exc
+
+    statement = select(superscout_model).where(
+        superscout_model.event_key == getattr(typed_superscout, "event_key"),
+        superscout_model.match_number == getattr(typed_superscout, "match_number"),
+        superscout_model.match_level == getattr(typed_superscout, "match_level"),
+        superscout_model.team_number == getattr(typed_superscout, "team_number"),
+        superscout_model.user_id == getattr(typed_superscout, "user_id"),
+        superscout_model.organization_id == getattr(typed_superscout, "organization_id"),
+    )
+
+    result = await session.execute(statement)
+    if result.scalars().first() is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Super scout data has already been submitted for this match",
+        )
+
+    session.add(typed_superscout)
+
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Super scout data has already been submitted for this match",
+        ) from exc
+
+    await session.refresh(typed_superscout)
+
+    return typed_superscout
 
 
 async def _submit_match_for_year(

@@ -1,12 +1,14 @@
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from sqlmodel.ext.asyncio.session import AsyncSession
-from auth.dependencies import get_current_user
-from db.database import get_session
 from functools import reduce
 from typing import Any, Dict, List, Optional, Type
 from uuid import UUID
 
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from auth.dependencies import get_current_user
+from db.database import get_session
 
 from models import DataValidation, MatchData, PitScout, Season, SuperScoutData, ValidationStatus
 from services.event import MATCH_DATA_MODELS_BY_YEAR
@@ -28,6 +30,7 @@ from services.scout import (
     delete_pit_scout_record,
     get_already_scouted_matches,
     get_prescout_records,
+    get_superscout_field_options,
     get_superscout_records,
     get_data_validations_for_active_event,
     get_pit_scout_records,
@@ -41,6 +44,11 @@ from services.scout import (
     update_pit_scout_record,
     update_tba_match_data_for_pending_alliances,
 )
+
+
+class SuperScoutFieldOption(BaseModel):
+    key: str
+    label: str
 
 
 @router.get("/dataValidation", response_model=List[DataValidation])
@@ -251,6 +259,14 @@ async def list_superscout_records(
     session: AsyncSession = Depends(get_session),
 ):
     return await get_superscout_records(session, user, team_number=team_number)
+
+
+@router.get("/superscout/fields", response_model=List[SuperScoutFieldOption])
+async def list_superscout_field_options(
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await get_superscout_field_options(session, user)
 
 
 @router.post("/superscout", response_model=SuperScoutResponse, status_code=201)

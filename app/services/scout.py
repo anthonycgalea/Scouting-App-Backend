@@ -61,6 +61,36 @@ SUPERSCOUT_MODELS_BY_YEAR: Dict[int, type[SuperScoutData]] = {
     2025: SuperScoutData2025,
 }
 
+SUPERSCOUT_BUTTON_FIELDS_BASE: List[Tuple[str, str]] = [
+    ("stopped_moving", "Stopped Moving"),
+    ("dead_lt_45_seconds", "Dead < 45 Seconds"),
+    ("dead_gt_45_seconds", "Dead > 45 Seconds"),
+    ("slow_drive", "Slow Drive"),
+    ("fast_drive", "Fast Drive"),
+    ("good_driving", "Good Driving"),
+    ("bad_driving", "Bad Driving"),
+    ("drops_game_pieces", "Drops Game Pieces"),
+    ("lots_of_fouls", "Lots of Fouls"),
+    ("tipped", "Tipped"),
+    ("didnt_move", "Did Not Move"),
+    ("broken", "Broken"),
+    ("no_show", "No Show"),
+    ("dnp", "DNP"),
+    ("played_defense", "Played Defense"),
+    ("received_defense", "Received Defense"),
+    ("yellow_card", "Yellow Card"),
+    ("red_card", "Red Card"),
+]
+
+SUPERSCOUT_BUTTON_FIELDS_BY_YEAR: Dict[int, List[Tuple[str, str]]] = {
+    2025: [
+        *SUPERSCOUT_BUTTON_FIELDS_BASE,
+        ("floor_algae", "Floor Algae"),
+        ("floor_coral", "Floor Coral"),
+        ("holds_both_pieces", "Holds Both Pieces"),
+    ],
+}
+
 TBA_BREAKDOWN_PARSERS_BY_YEAR: Dict[
     int, Callable[[Optional[Dict[str, Any]], Sequence[int]], Dict[str, Any]]
 ] = {}
@@ -783,6 +813,28 @@ async def get_superscout_records(
 
     result = await session.execute(statement)
     return result.scalars().all()
+
+
+async def get_superscout_field_options(
+    session: AsyncSession,
+    user: dict,
+) -> List[Dict[str, str]]:
+    user_payload = _normalize_user_payload(user)
+
+    event_key = await get_active_event_key_for_user(session, user_payload)
+    event = await get_event_or_404(session, event_key)
+
+    if SUPERSCOUT_MODELS_BY_YEAR.get(event.year) is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Superscouting is not available for this event",
+        )
+
+    field_options = SUPERSCOUT_BUTTON_FIELDS_BY_YEAR.get(
+        event.year, SUPERSCOUT_BUTTON_FIELDS_BASE
+    )
+
+    return [{"key": key, "label": label} for key, label in field_options]
 
 
 class PitScoutDeleteRequest(SQLModel):

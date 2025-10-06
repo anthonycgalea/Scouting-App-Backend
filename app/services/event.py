@@ -26,6 +26,7 @@ from models import (
     UserRole,
     EventRankings,
 )
+from services.season import get_season_by_year_or_404
 
 class MatchScheduleResponse(SQLModel):
     event_key: str
@@ -135,6 +136,7 @@ class AllianceMatchPreview(SQLModel):
 
 
 class MatchPreviewResponse(SQLModel):
+    season: int
     red: AllianceMatchPreview
     blue: AllianceMatchPreview
 
@@ -616,6 +618,7 @@ async def get_match_preview(
     membership = await get_user_membership_or_404(session, user)
 
     match = await get_match_or_404(session, event_key, match_number, match_level)
+    season = await get_season_by_year_or_404(session, event.year)
 
     match_model = MATCH_DATA_MODELS_BY_YEAR.get(event.year)
     if match_model is None:
@@ -653,7 +656,11 @@ async def get_match_preview(
         endgame_points,
     )
 
-    return MatchPreviewResponse(red=red_preview, blue=blue_preview)
+    return MatchPreviewResponse(
+        season=season.id,
+        red=red_preview,
+        blue=blue_preview,
+    )
 
 
 def _get_model_field_order(model: type[SQLModel]) -> List[str]:

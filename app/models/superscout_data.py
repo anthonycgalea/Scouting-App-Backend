@@ -5,11 +5,6 @@ from enum import Enum
 from uuid import UUID
 from pydantic import ConfigDict
 
-class StartingPosition(str, Enum):
-    LEFT = "LEFT"
-    CENTER = "CENTER"
-    RIGHT = "RIGHT"
-
 class SuperScoutData(SQLModel):
     """Base fields shared by all superscout data tables."""
 
@@ -49,6 +44,6 @@ class SuperScoutData(SQLModel):
     received_defense: bool = Field(default=False)
     yellow_card: bool = Field(default=False)
     red_card: bool = Field(default=False)
-    defense_rating: int = Field(nullable=True, ge=1, le=3)
-    driver_rating: int = Field(nullable=True, ge=1, le=3)
+    defense_rating: int = Field(nullable=True, ge=1, le=5)
+    driver_rating: int = Field(nullable=True, ge=1, le=5)
     robot_overall: int = Field(ge=1, le=5)

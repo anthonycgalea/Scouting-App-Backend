@@ -5,7 +5,7 @@ from .frc_event import FRCEvent
 from .frc_season import Season
 from .frc_team_record import TeamRecord
 from .match_data import MatchData
-from .match_data_2025 import Endgame2025, MatchData2025
+from .match_data_2025 import Endgame2025, MatchData2025, Prescout2025
 from .match_data_2026 import MatchData2026
 from .match_schedule import MatchSchedule
 from .organization import Organization

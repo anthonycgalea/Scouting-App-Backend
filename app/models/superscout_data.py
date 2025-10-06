@@ -44,6 +44,6 @@ class SuperScoutData(SQLModel):
     received_defense: bool = Field(default=False)
     yellow_card: bool = Field(default=False)
     red_card: bool = Field(default=False)
-    defense_rating: int = Field(nullable=True, ge=1, le=5)
-    driver_rating: int = Field(nullable=True, ge=1, le=5)
+    defense_rating: Optional[int] = Field(default=None, nullable=True, ge=1, le=5)
+    driver_rating: Optional[int] = Field(default=None, nullable=True, ge=1, le=5)
     robot_overall: int = Field(ge=1, le=5)

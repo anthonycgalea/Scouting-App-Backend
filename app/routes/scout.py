@@ -8,7 +8,7 @@ from uuid import UUID
 
 from sqlmodel import select
 
-from models import DataValidation, MatchData, PitScout, Season, ValidationStatus
+from models import DataValidation, MatchData, PitScout, Season, SuperScoutData, ValidationStatus
 from services.event import MATCH_DATA_MODELS_BY_YEAR
 from services.scout import PIT_SCOUT_MODELS_BY_YEAR
 
@@ -28,12 +28,15 @@ from services.scout import (
     delete_pit_scout_record,
     get_already_scouted_matches,
     get_prescout_records,
+    get_superscout_records,
     get_data_validations_for_active_event,
     get_pit_scout_records,
     PitScoutDeleteRequest,
     PRESCOUT_MODELS_BY_YEAR,
+    SUPERSCOUT_MODELS_BY_YEAR,
     submit_scouted_match,
     submit_prescout_record,
+    submit_superscout_record,
     update_scouted_match,
     update_pit_scout_record,
     update_tba_match_data_for_pending_alliances,
@@ -171,6 +174,22 @@ PrescoutResponse = reduce(
 )
 
 
+superscout_response_types: List[Type[SuperScoutData]] = []
+
+for superscout_model in SUPERSCOUT_MODELS_BY_YEAR.values():
+    if superscout_model not in superscout_response_types:
+        superscout_response_types.append(superscout_model)
+
+if SuperScoutData not in superscout_response_types:
+    superscout_response_types.append(SuperScoutData)
+
+SuperScoutResponse = reduce(
+    lambda accumulated, next_model: accumulated | next_model,
+    superscout_response_types[1:],
+    superscout_response_types[0],
+)
+
+
 @router.get("/pit", response_model=List[PitScoutResponse])
 async def list_pit_scout_records(
     team_number: Optional[int] = Query(default=None, alias="teamNumber"),
@@ -223,6 +242,24 @@ async def create_prescout_entry(
     session: AsyncSession = Depends(get_session),
 ):
     return await submit_prescout_record(session, prescout, user)
+
+
+@router.get("/superscout", response_model=List[SuperScoutResponse])
+async def list_superscout_records(
+    team_number: Optional[int] = Query(default=None, alias="teamNumber"),
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await get_superscout_records(session, user, team_number=team_number)
+
+
+@router.post("/superscout", response_model=SuperScoutResponse, status_code=201)
+async def create_superscout_entry(
+    superscout: SuperScoutData,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await submit_superscout_record(session, superscout, user)
 
 
 @router.post("/matches")

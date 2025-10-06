@@ -12,6 +12,8 @@ from .organization import Organization
 from .organization_event import OrganizationEvent
 from .organization_feature_settings import OrganizationFeatureSettings
 from .robot_event_image_link import RobotEventImageLink
+from .superscout_data import SuperScoutData
+from .superscout_data_2025 import SuperScoutData2025
 from .tba_match_data import Alliance, TBAMatchData
 from .tba_match_data_2025 import TBAMatchData2025
 from .team_at_event import TeamEvent

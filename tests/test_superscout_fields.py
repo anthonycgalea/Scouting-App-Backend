@@ -1,0 +1,117 @@
+import asyncio
+from datetime import datetime
+from uuid import uuid4
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.auth.dependencies import get_current_user
+from app.main import app
+from app.models import (
+    FRCEvent,
+    Organization,
+    OrganizationEvent,
+    Season,
+    User,
+    UserOrganization,
+    UserRole,
+)
+from tests.conftest import AsyncSessionLocal
+
+
+async def _prepare_superscout_context():
+    async with AsyncSessionLocal() as session:
+        season = Season(id=7, year=2025, name="REEFSCAPE")
+        event = FRCEvent(
+            event_key="2025super",
+            event_name="Superscout Test Event",
+            short_name="SuperTest",
+            year=2025,
+            week=3,
+        )
+        organization = Organization(name="Super Org", team_number=2468)
+        user_id = uuid4()
+        user = User(
+            id=user_id,
+            email="super@example.com",
+            auth_provider="discord",
+            display_name="Super User",
+            logged_in_user_org=None,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+
+        session.add_all([season, event, organization, user])
+        await session.commit()
+        await session.refresh(organization)
+
+        membership = UserOrganization(
+            user_id=user_id,
+            organization_id=organization.id,
+            role=UserRole.MEMBER,
+        )
+        session.add(membership)
+        await session.commit()
+        await session.refresh(membership)
+
+        organization_event = OrganizationEvent(
+            organization_id=organization.id,
+            event_key=event.event_key,
+            public_data=True,
+            active=True,
+        )
+        session.add(organization_event)
+        await session.commit()
+
+        return {
+            "user_id": user_id,
+            "membership_id": membership.id,
+        }
+
+
+@pytest.fixture(scope="module")
+def superscout_client(setup_database):
+    data = asyncio.run(_prepare_superscout_context())
+
+    async def override_current_user():
+        return {
+            "id": str(data["user_id"]),
+            "displayName": "Super User",
+            "email": "super@example.com",
+            "user_org": data["membership_id"],
+        }
+
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    with TestClient(app) as client:
+        yield client
+
+    app.dependency_overrides.pop(get_current_user, None)
+
+
+def test_get_superscout_field_options(superscout_client):
+    response = superscout_client.get("/scout/superscout/fields")
+    assert response.status_code == 200
+    assert response.json() == [
+        {"key": "stopped_moving", "label": "Stopped Moving"},
+        {"key": "dead_lt_45_seconds", "label": "Dead < 45 Seconds"},
+        {"key": "dead_gt_45_seconds", "label": "Dead > 45 Seconds"},
+        {"key": "slow_drive", "label": "Slow Drive"},
+        {"key": "fast_drive", "label": "Fast Drive"},
+        {"key": "good_driving", "label": "Good Driving"},
+        {"key": "bad_driving", "label": "Bad Driving"},
+        {"key": "drops_game_pieces", "label": "Drops Game Pieces"},
+        {"key": "lots_of_fouls", "label": "Lots of Fouls"},
+        {"key": "tipped", "label": "Tipped"},
+        {"key": "didnt_move", "label": "Did Not Move"},
+        {"key": "broken", "label": "Broken"},
+        {"key": "no_show", "label": "No Show"},
+        {"key": "dnp", "label": "DNP"},
+        {"key": "played_defense", "label": "Played Defense"},
+        {"key": "received_defense", "label": "Received Defense"},
+        {"key": "yellow_card", "label": "Yellow Card"},
+        {"key": "red_card", "label": "Red Card"},
+        {"key": "floor_algae", "label": "Floor Algae"},
+        {"key": "floor_coral", "label": "Floor Coral"},
+        {"key": "holds_both_pieces", "label": "Holds Both Pieces"},
+    ]

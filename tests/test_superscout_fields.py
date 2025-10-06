@@ -66,6 +66,9 @@ async def _prepare_superscout_context():
         return {
             "user_id": user_id,
             "membership_id": membership.id,
+            "organization_id": organization.id,
+            "event_key": event.event_key,
+            "season_id": season.id,
         }
 
 
@@ -84,6 +87,7 @@ def superscout_client(setup_database):
     app.dependency_overrides[get_current_user] = override_current_user
 
     with TestClient(app) as client:
+        client.test_context = data
         yield client
 
     app.dependency_overrides.pop(get_current_user, None)
@@ -115,3 +119,44 @@ def test_get_superscout_field_options(superscout_client):
         {"key": "floor_coral", "label": "Floor Coral"},
         {"key": "holds_both_pieces", "label": "Holds Both Pieces"},
     ]
+
+
+def test_create_superscout_record_auto_fields(superscout_client):
+    payload = {
+        "team_number": 111,
+        "match_number": 1,
+        "match_level": "qm",
+        "robot_overall": 4,
+        "timestamp": "2000-01-01T00:00:00Z",
+    }
+
+    response = superscout_client.post("/scout/superscout", json=payload)
+    assert response.status_code == 201
+
+    body = response.json()
+    context = superscout_client.test_context
+
+    assert body["event_key"] == context["event_key"]
+    assert body["season"] == context["season_id"]
+    assert body["user_id"] == str(context["user_id"])
+    assert body["organization_id"] == context["organization_id"]
+    assert body["notes"] == ""
+    assert body["team_number"] == payload["team_number"]
+    assert body["match_number"] == payload["match_number"]
+    assert body["match_level"] == payload["match_level"]
+    assert body["robot_overall"] == payload["robot_overall"]
+    assert body["timestamp"] != payload["timestamp"]
+
+
+def test_create_superscout_record_rejects_mismatched_event(superscout_client):
+    payload = {
+        "team_number": 111,
+        "match_number": 2,
+        "match_level": "qm",
+        "robot_overall": 5,
+        "event_key": "wrong_event",
+    }
+
+    response = superscout_client.post("/scout/superscout", json=payload)
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Superscout event does not match the active event for this user"

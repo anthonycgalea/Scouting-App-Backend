@@ -1383,82 +1383,74 @@ async def submit_prescout_record(
 
 async def submit_superscout_record(
     session: AsyncSession,
-    superscout: SuperScoutData,
-    user: User,
+    superscout: Union[Dict[str, Any], SuperScoutData],
+    user: Any,
 ) -> SuperScoutData:
-    superscout_payload = _model_dump(superscout)
-    try:
-        base_superscout = cast(SuperScoutData, _model_validate(SuperScoutData, superscout_payload))
-    except ValidationError as exc:  # pragma: no cover - defensive guard
-        raise HTTPException(status_code=422, detail="Invalid superscout payload") from exc
+    payload = _coerce_payload(superscout)
+    user_payload = _normalize_user_payload(user)
 
-    user_id: Optional[UUID] = getattr(user, "id", None)
-    if user_id is None:
-        raise HTTPException(status_code=401, detail="User not authenticated")
+    event_key = await get_active_event_key_for_user(session, user_payload)
+    incoming_event_key = payload.get("event_key")
+    if incoming_event_key is not None and incoming_event_key != event_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Superscout event does not match the active event for this user",
+        )
+    payload["event_key"] = event_key
 
-    if isinstance(user_id, str):
-        try:
-            user_id = UUID(user_id)
-        except ValueError as exc:  # pragma: no cover - defensive programming
-            raise HTTPException(status_code=400, detail="Invalid user identifier") from exc
-
-    membership_id: Optional[Any] = getattr(user, "logged_in_user_org", None)
-    if membership_id is None:
-        raise HTTPException(status_code=404, detail="User is not logged into an organization")
-
-    if isinstance(membership_id, str):
-        try:
-            membership_id = int(membership_id)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid organization membership identifier",
-            ) from exc
-
-    membership = await session.get(UserOrganization, membership_id)
-    if membership is None:
-        raise HTTPException(status_code=404, detail="Organization membership not found")
+    membership = await _get_user_membership_or_404(session, user_payload)
+    user_id = await _normalize_user_id(user_payload)
 
     if membership.user_id != user_id:
         raise HTTPException(status_code=403, detail="User does not belong to this organization")
 
-    if base_superscout.organization_id != membership.organization_id:
+    incoming_user_id = _coerce_optional_uuid(payload.get("user_id"))
+    if incoming_user_id is not None and incoming_user_id != user_id:
         raise HTTPException(
             status_code=403,
-            detail="Superscout data does not belong to the active organization",
+            detail="Superscout data user does not match the authenticated user",
         )
+    payload["user_id"] = user_id
 
-    event = await get_event_or_404(session, base_superscout.event_key)
+    organization_id = membership.organization_id
+    incoming_org_id = payload.get("organization_id")
+    if incoming_org_id is not None:
+        try:
+            incoming_org_id_int = int(incoming_org_id)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid organization identifier for superscout data") from exc
 
-    season = await session.get(Season, base_superscout.season)
-    if season is None:
-        raise HTTPException(status_code=404, detail="Season not found for provided superscout data")
+        if incoming_org_id_int != organization_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Superscout data does not belong to the active organization",
+            )
+    payload["organization_id"] = organization_id
 
-    if event.year != season.year:
-        raise HTTPException(
-            status_code=400,
-            detail="Superscout data event does not match the expected season year",
-        )
+    event = await get_event_or_404(session, event_key)
 
-    superscout_model = SUPERSCOUT_MODELS_BY_YEAR.get(season.year)
+    season = await get_season_by_year_or_404(session, event.year)
+    incoming_season = payload.get("season")
+    if incoming_season is not None:
+        try:
+            incoming_season_id = int(incoming_season)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid season provided for superscout data") from exc
+
+        if incoming_season_id != season.id:
+            raise HTTPException(
+                status_code=400,
+                detail="Superscout season does not match the active event year",
+            )
+    payload["season"] = season.id
+
+    superscout_model = SUPERSCOUT_MODELS_BY_YEAR.get(event.year)
     if superscout_model is None:
         raise HTTPException(
             status_code=404,
             detail="Superscouting is not available for this season",
         )
 
-    superscout_user_id = getattr(base_superscout, "user_id", None)
-    if superscout_user_id and superscout_user_id != user_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Superscout data user does not match the authenticated user",
-        )
-
-    payload: Dict[str, Any] = {
-        **superscout_payload,
-        "user_id": user_id,
-        "organization_id": membership.organization_id,
-    }
     payload["notes"] = payload.get("notes") or ""
     payload.pop("timestamp", None)
 

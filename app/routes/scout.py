@@ -271,7 +271,7 @@ async def list_superscout_field_options(
 
 @router.post("/superscout", response_model=SuperScoutResponse, status_code=201)
 async def create_superscout_entry(
-    superscout: SuperScoutData,
+    superscout: Dict[str, Any] = Body(...),
     user=Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):

@@ -35,5 +35,10 @@ class MatchData2025(MatchData, table=True):
     endgame: Endgame2025 = Field(default=Endgame2025.NONE)
 
 
+class Prescout2025(MatchData, table=True):
+    """Prescout table that shares the base match-scoped columns."""
+
+    __tablename__ = "prescout2025"
+
 register_match_data_creation_hook(MatchData2025)
 

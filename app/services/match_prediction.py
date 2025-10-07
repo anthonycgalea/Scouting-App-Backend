@@ -13,7 +13,9 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from models import (
     MatchData,
+    Organization,
     Prescout2025,
+    StatboticsData,
     UserOrganization,
 )
 from services.event import (
@@ -222,6 +224,34 @@ async def calculate_weighted_match_statistics(
     matches = await retrieve_prediction_data(session, user)
 
     if not matches:
+        statbotics_weights: List[float] = list(WEIGHT_SCHEDULE)
+    else:
+        statbotics_weights = list(WEIGHT_SCHEDULE[len(matches) :])
+
+    statbotics_record: StatboticsData | None = None
+    if statbotics_weights:
+        user_payload = _normalize_user_payload(user)
+        event_key = await get_active_event_key_for_user(session, user_payload)
+        membership = await _get_user_membership_or_404(session, user_payload)
+
+        team_number: int | None = None
+        organization = await session.get(Organization, membership.organization_id)
+        if organization is not None and organization.team_number is not None:
+            team_number = organization.team_number
+
+        if team_number is None:
+            for match in matches:
+                match_team = getattr(match, "team_number", None)
+                if match_team is not None:
+                    team_number = int(match_team)
+                    break
+
+        if team_number is not None:
+            statbotics_record = await session.get(
+                StatboticsData, (event_key, int(team_number))
+            )
+
+    if not matches and statbotics_record is None:
         return {"sample_size": 0, "statistics": {}}
 
     weighted_values: DefaultDict[str, List[Tuple[float, float]]] = defaultdict(list)
@@ -238,6 +268,16 @@ async def calculate_weighted_match_statistics(
                 continue
 
             if isinstance(value, Number):
+                weighted_values[field].append((float(value), float(weight)))
+
+    if statbotics_record is not None and statbotics_weights:
+        supplemental_fields = {
+            "autonomous_points": statbotics_record.auto_points,
+            "teleop_points": statbotics_record.teleop_points,
+            "endgame_points": statbotics_record.endgame_points,
+        }
+        for weight in statbotics_weights:
+            for field, value in supplemental_fields.items():
                 weighted_values[field].append((float(value), float(weight)))
 
     statistics: Dict[str, Dict[str, float]] = {}

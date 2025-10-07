@@ -247,7 +247,7 @@ async def _get_active_org_event(
         OrganizationEvent.active == True,  # noqa: E712 - SQLAlchemy boolean comparison
     )
     result = await session.exec(statement)
-    org_event = result.scalar_one_or_none()
+    org_event = result.one_or_none()
 
     if org_event is None:
         raise HTTPException(

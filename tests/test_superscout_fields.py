@@ -9,9 +9,12 @@ from app.auth.dependencies import get_current_user
 from app.main import app
 from app.models import (
     FRCEvent,
+    MatchSchedule,
     Organization,
     OrganizationEvent,
     Season,
+    SuperScoutData2025,
+    TeamRecord,
     User,
     UserOrganization,
     UserRole,
@@ -160,3 +163,176 @@ def test_create_superscout_record_rejects_mismatched_event(superscout_client):
     response = superscout_client.post("/scout/superscout", json=payload)
     assert response.status_code == 400
     assert response.json()["detail"] == "Superscout event does not match the active event for this user"
+
+
+def test_get_superscouted_matches(superscout_client):
+    context = superscout_client.test_context
+
+    async def seed_superscout_data():
+        async with AsyncSessionLocal() as session:
+            teams = [
+                TeamRecord(teamNumber=number, teamName=f"Team {number}")
+                for number in (
+                    301,
+                    302,
+                    303,
+                    304,
+                    305,
+                    306,
+                    401,
+                    402,
+                    403,
+                    404,
+                    405,
+                    406,
+                )
+            ]
+            session.add_all(teams)
+            await session.commit()
+
+            schedules = [
+                MatchSchedule(
+                    event_key=context["event_key"],
+                    match_number=5,
+                    match_level="qm",
+                    red1_id=301,
+                    red2_id=302,
+                    red3_id=303,
+                    blue1_id=304,
+                    blue2_id=305,
+                    blue3_id=306,
+                ),
+                MatchSchedule(
+                    event_key=context["event_key"],
+                    match_number=6,
+                    match_level="qm",
+                    red1_id=401,
+                    red2_id=402,
+                    red3_id=403,
+                    blue1_id=404,
+                    blue2_id=405,
+                    blue3_id=406,
+                ),
+            ]
+            session.add_all(schedules)
+            await session.commit()
+
+            superscout_entries = [
+                # Match 5: all alliances superscouted
+                SuperScoutData2025(
+                    season=context["season_id"],
+                    team_number=301,
+                    event_key=context["event_key"],
+                    match_number=5,
+                    match_level="qm",
+                    user_id=context["user_id"],
+                    organization_id=context["organization_id"],
+                    robot_overall=3,
+                ),
+                SuperScoutData2025(
+                    season=context["season_id"],
+                    team_number=302,
+                    event_key=context["event_key"],
+                    match_number=5,
+                    match_level="qm",
+                    user_id=context["user_id"],
+                    organization_id=context["organization_id"],
+                    robot_overall=3,
+                ),
+                SuperScoutData2025(
+                    season=context["season_id"],
+                    team_number=303,
+                    event_key=context["event_key"],
+                    match_number=5,
+                    match_level="qm",
+                    user_id=context["user_id"],
+                    organization_id=context["organization_id"],
+                    robot_overall=3,
+                ),
+                SuperScoutData2025(
+                    season=context["season_id"],
+                    team_number=304,
+                    event_key=context["event_key"],
+                    match_number=5,
+                    match_level="qm",
+                    user_id=context["user_id"],
+                    organization_id=context["organization_id"],
+                    robot_overall=3,
+                ),
+                SuperScoutData2025(
+                    season=context["season_id"],
+                    team_number=305,
+                    event_key=context["event_key"],
+                    match_number=5,
+                    match_level="qm",
+                    user_id=context["user_id"],
+                    organization_id=context["organization_id"],
+                    robot_overall=3,
+                ),
+                SuperScoutData2025(
+                    season=context["season_id"],
+                    team_number=306,
+                    event_key=context["event_key"],
+                    match_number=5,
+                    match_level="qm",
+                    user_id=context["user_id"],
+                    organization_id=context["organization_id"],
+                    robot_overall=3,
+                ),
+                # Match 6: only red alliance superscouted
+                SuperScoutData2025(
+                    season=context["season_id"],
+                    team_number=401,
+                    event_key=context["event_key"],
+                    match_number=6,
+                    match_level="qm",
+                    user_id=context["user_id"],
+                    organization_id=context["organization_id"],
+                    robot_overall=3,
+                ),
+                SuperScoutData2025(
+                    season=context["season_id"],
+                    team_number=402,
+                    event_key=context["event_key"],
+                    match_number=6,
+                    match_level="qm",
+                    user_id=context["user_id"],
+                    organization_id=context["organization_id"],
+                    robot_overall=3,
+                ),
+                SuperScoutData2025(
+                    season=context["season_id"],
+                    team_number=403,
+                    event_key=context["event_key"],
+                    match_number=6,
+                    match_level="qm",
+                    user_id=context["user_id"],
+                    organization_id=context["organization_id"],
+                    robot_overall=3,
+                ),
+            ]
+
+            session.add_all(superscout_entries)
+            await session.commit()
+
+    asyncio.run(seed_superscout_data())
+
+    response = superscout_client.get("/scout/superscouted")
+    assert response.status_code == 200
+
+    assert response.json() == [
+        {
+            "eventCode": context["event_key"],
+            "matchLevel": "qm",
+            "matchNumber": 5,
+            "red": True,
+            "blue": True,
+        },
+        {
+            "eventCode": context["event_key"],
+            "matchLevel": "qm",
+            "matchNumber": 6,
+            "red": True,
+            "blue": False,
+        },
+    ]

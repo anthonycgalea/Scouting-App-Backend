@@ -32,6 +32,7 @@ from services.scout import (
     get_prescout_records,
     get_superscout_field_options,
     get_superscout_records,
+    get_superscouted_match_alliances,
     get_data_validations_for_active_event,
     get_pit_scout_records,
     PitScoutDeleteRequest,
@@ -49,6 +50,14 @@ from services.scout import (
 class SuperScoutFieldOption(BaseModel):
     key: str
     label: str
+
+
+class SuperScoutMatchAllianceStatus(BaseModel):
+    eventCode: str
+    matchLevel: str
+    matchNumber: int
+    red: bool
+    blue: bool
 
 
 @router.get("/dataValidation", response_model=List[DataValidation])
@@ -259,6 +268,14 @@ async def list_superscout_records(
     session: AsyncSession = Depends(get_session),
 ):
     return await get_superscout_records(session, user, team_number=team_number)
+
+
+@router.get("/superscouted", response_model=List[SuperScoutMatchAllianceStatus])
+async def list_superscouted_alliances(
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await get_superscouted_match_alliances(session, user)
 
 
 @router.get("/superscout/fields", response_model=List[SuperScoutFieldOption])

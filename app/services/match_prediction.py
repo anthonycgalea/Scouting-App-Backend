@@ -65,10 +65,17 @@ def _apply_calculated_fields(
         return
 
     for record in records:
-        record.autonomous_points = calculate_phase_points(record, auto_weights)
-        record.teleop_points = calculate_phase_points(record, teleop_weights)
-        record.endgame_points = calculate_endgame_points(
+        autonomous_points = calculate_phase_points(record, auto_weights)
+        teleop_points = calculate_phase_points(record, teleop_weights)
+        endgame_points_total = calculate_endgame_points(
             getattr(record, "endgame", None), endgame_points
+        )
+
+        record.autonomous_points = autonomous_points
+        record.teleop_points = teleop_points
+        record.endgame_points = endgame_points_total
+        record.total_points = (
+            autonomous_points + teleop_points + endgame_points_total
         )
 
 
@@ -286,6 +293,7 @@ async def calculate_weighted_match_statistics(
             "autonomous_points": statbotics_record.auto_points,
             "teleop_points": statbotics_record.teleop_points,
             "endgame_points": statbotics_record.endgame_points,
+            "total_points": statbotics_record.total_points,
         }
         for weight in statbotics_weights:
             for field, value in supplemental_fields.items():

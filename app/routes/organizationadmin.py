@@ -230,7 +230,7 @@ class OrganizationMemberDeleteRequest(SQLModel):
 
 
 class DeleteOrganizationEventRequest(SQLModel):
-    organization_event_id: UUID
+    eventCode: str
 
 
 class OrganizationApplicationDeleteRequest(SQLModel):
@@ -1032,7 +1032,8 @@ async def delete_organization_event(
         )
 
     statement = select(OrganizationEvent).where(
-        OrganizationEvent.id == payload.organization_event_id
+        OrganizationEvent.event_key == payload.eventCode,
+        OrganizationEvent.organization_id == membership.organization_id,
     )
     result = await session.exec(statement)
     organization_event = result.first()
@@ -1040,11 +1041,8 @@ async def delete_organization_event(
     if organization_event is None:
         raise HTTPException(status_code=404, detail="Organization event not found")
 
-    if organization_event.organization_id != membership.organization_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Organization event does not belong to this organization",
-        )
+    if organization_event.active:
+        raise HTTPException(status_code=400, detail="Cannot delete an active event")
 
     event_key = organization_event.event_key
     organization_id = organization_event.organization_id

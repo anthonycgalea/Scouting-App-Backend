@@ -815,6 +815,85 @@ async def get_superscout_records(
     return result.scalars().all()
 
 
+async def get_superscouted_match_alliances(
+    session: AsyncSession,
+    user: dict,
+) -> List[Dict[str, Any]]:
+    user_payload = _normalize_user_payload(user)
+
+    event_key = await get_active_event_key_for_user(session, user_payload)
+    event = await get_event_or_404(session, event_key)
+
+    membership = await _get_user_membership_or_404(session, user_payload)
+
+    superscout_model = SUPERSCOUT_MODELS_BY_YEAR.get(event.year)
+    if superscout_model is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Superscouting is not available for this event",
+        )
+
+    schedule_statement = select(MatchSchedule).where(
+        MatchSchedule.event_key == event_key
+    )
+    schedule_result = await session.execute(schedule_statement)
+    match_schedules = schedule_result.scalars().all()
+
+    if not match_schedules:
+        return []
+
+    superscout_statement = select(superscout_model).where(
+        superscout_model.event_key == event_key,
+        superscout_model.organization_id == membership.organization_id,
+    )
+    superscout_result = await session.execute(superscout_statement)
+    superscout_records = superscout_result.scalars().all()
+
+    scouted_by_match: Dict[Tuple[str, int], Set[int]] = defaultdict(set)
+    for record in superscout_records:
+        scouted_by_match[(record.match_level, record.match_number)].add(
+            record.team_number
+        )
+
+    match_schedules.sort(key=lambda match: (match.match_level, match.match_number))
+
+    response: List[Dict[str, Any]] = []
+    for schedule in match_schedules:
+        match_key = (schedule.match_level, schedule.match_number)
+        scouted_teams = scouted_by_match.get(match_key, set())
+
+        red_teams = [
+            team
+            for team in (
+                schedule.red1_id,
+                schedule.red2_id,
+                schedule.red3_id,
+            )
+            if team is not None
+        ]
+        blue_teams = [
+            team
+            for team in (
+                schedule.blue1_id,
+                schedule.blue2_id,
+                schedule.blue3_id,
+            )
+            if team is not None
+        ]
+
+        response.append(
+            {
+                "eventCode": schedule.event_key,
+                "matchLevel": schedule.match_level,
+                "matchNumber": schedule.match_number,
+                "red": all(team in scouted_teams for team in red_teams),
+                "blue": all(team in scouted_teams for team in blue_teams),
+            }
+        )
+
+    return response
+
+
 async def get_superscout_field_options(
     session: AsyncSession,
     user: dict,

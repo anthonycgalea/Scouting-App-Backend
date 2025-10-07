@@ -213,3 +213,104 @@ async def test_statbotics_data_supplements_weighted_statistics(setup_database):
         assert auto_average == pytest.approx(221 / 23)
         assert teleop_average == pytest.approx(175 / 23)
         assert endgame_average == pytest.approx(126 / 23)
+
+
+@pytest.mark.asyncio
+async def test_missing_statbotics_data_triggers_update(monkeypatch, setup_database):
+    async with AsyncSessionLocal() as session:
+        season = Season(id=299, year=2025, name="REEFSCAPE Statbotics Update")
+        event = FRCEvent(
+            event_key="2025statupdate",
+            event_name="Statbotics Update Event",
+            short_name="StatUpdate",
+            year=2025,
+            week=1,
+        )
+        organization = Organization(name="Update Org", team_number=2468)
+        now = datetime.utcnow()
+        user_id = uuid4()
+        user = User(
+            id=user_id,
+            email="update@example.com",
+            auth_provider="discord",
+            display_name="Update User",
+            logged_in_user_org=None,
+            created_at=now,
+            updated_at=now,
+        )
+        team_record = TeamRecord(team_number=2468, team_name="Team 2468")
+
+        session.add_all([season, event, organization, user, team_record])
+        await session.commit()
+        await session.refresh(organization)
+
+        membership = UserOrganization(
+            user_id=user_id,
+            organization_id=organization.id,
+            role=UserRole.MEMBER,
+        )
+        session.add(membership)
+        await session.commit()
+        await session.refresh(membership)
+
+        organization_event = OrganizationEvent(
+            organization_id=organization.id,
+            event_key=event.event_key,
+            public_data=True,
+            active=True,
+        )
+        session.add(organization_event)
+
+        match = MatchData2025(
+            season=season.id,
+            team_number=team_record.team_number,
+            event_key=event.event_key,
+            match_number=1,
+            match_level="qm",
+            user_id=user_id,
+            organization_id=organization.id,
+            endgame=Endgame2025.NONE,
+        )
+        session.add(match)
+        await session.commit()
+
+        async def fake_update(session_param, event_code):
+            assert session_param is session
+            assert event_code == event.event_key
+
+            statbotics_record = StatboticsData(
+                event_key=event.event_key,
+                team_number=team_record.team_number,
+                total_points=40.0,
+                auto_points=15.0,
+                teleop_points=18.0,
+                endgame_points=12.0,
+            )
+            session_param.add(statbotics_record)
+            await session_param.commit()
+
+            fake_update.called = True
+            return [statbotics_record]
+
+        fake_update.called = False
+        monkeypatch.setattr(
+            "app.services.match_prediction.update_statbotics_data_for_event",
+            fake_update,
+        )
+
+        user_payload = {"id": str(user_id), "user_org": membership.id}
+
+        result = await calculate_weighted_match_statistics(session, user_payload)
+
+        assert fake_update.called is True
+        assert result["sample_size"] == 1
+
+        statistics = result["statistics"]
+
+        auto_average = statistics["autonomous_points"]["weighted_average"]
+        teleop_average = statistics["teleop_points"]["weighted_average"]
+        endgame_average = statistics["endgame_points"]["weighted_average"]
+
+        assert auto_average == pytest.approx(300 / 23)
+        assert teleop_average == pytest.approx(360 / 23)
+        assert endgame_average == pytest.approx(240 / 23)

@@ -28,6 +28,7 @@ from services.event import (
     MATCH_MODEL_TELEOP_WEIGHTS_ATTR,
     get_active_event_key_for_user,
     get_event_or_404,
+    update_statbotics_data_for_event,
 )
 from services.scoring import (
     calculate_endgame_points,
@@ -250,6 +251,16 @@ async def calculate_weighted_match_statistics(
             statbotics_record = await session.get(
                 StatboticsData, (event_key, int(team_number))
             )
+
+            if statbotics_record is None and statbotics_weights:
+                try:
+                    await update_statbotics_data_for_event(session, event_key)
+                except HTTPException:
+                    pass
+
+                statbotics_record = await session.get(
+                    StatboticsData, (event_key, int(team_number))
+                )
 
     if not matches and statbotics_record is None:
         return {"sample_size": 0, "statistics": {}}

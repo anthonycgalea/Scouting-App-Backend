@@ -17,9 +17,21 @@ from models import (
     UserOrganization,
 )
 from services.event import (
+    DEFAULT_AUTO_WEIGHTS,
+    DEFAULT_ENDGAME_POINTS,
+    DEFAULT_TELEOP_WEIGHTS,
     MATCH_DATA_MODELS_BY_YEAR,
+    MATCH_MODEL_AUTO_WEIGHTS_ATTR,
+    MATCH_MODEL_ENDGAME_POINTS_ATTR,
+    MATCH_MODEL_TELEOP_WEIGHTS_ATTR,
     get_active_event_key_for_user,
     get_event_or_404,
+)
+from services.scoring import (
+    calculate_endgame_points,
+    calculate_phase_points,
+    resolve_endgame_points_mapping,
+    resolve_weight_mapping,
 )
 
 RecordType = TypeVar("RecordType", bound=MatchData)
@@ -40,6 +52,21 @@ MATCH_DATA_FIELDS_TO_EXCLUDE = {
     "timestamp",
     "notes",
 }
+def _apply_calculated_fields(
+    records: Sequence[MatchData],
+    auto_weights: Dict[str, float],
+    teleop_weights: Dict[str, float],
+    endgame_points: Dict[str, float],
+) -> None:
+    if not records:
+        return
+
+    for record in records:
+        record.autonomous_points = calculate_phase_points(record, auto_weights)
+        record.teleop_points = calculate_phase_points(record, teleop_weights)
+        record.endgame_points = calculate_endgame_points(
+            getattr(record, "endgame", None), endgame_points
+        )
 
 
 def _normalize_user_payload(user: Any) -> Dict[str, Any]:
@@ -132,20 +159,51 @@ async def retrieve_prediction_data(session: AsyncSession, user: Any) -> List[Mat
     limit = 10
 
     if match_model is not None:
+        auto_weights = resolve_weight_mapping(
+            match_model, MATCH_MODEL_AUTO_WEIGHTS_ATTR, DEFAULT_AUTO_WEIGHTS
+        )
+        teleop_weights = resolve_weight_mapping(
+            match_model, MATCH_MODEL_TELEOP_WEIGHTS_ATTR, DEFAULT_TELEOP_WEIGHTS
+        )
+        endgame_points = resolve_endgame_points_mapping(
+            match_model, MATCH_MODEL_ENDGAME_POINTS_ATTR, DEFAULT_ENDGAME_POINTS
+        )
+
         scouted_records = await _fetch_match_records(
             session, match_model, event_key, membership.organization_id
         )
-        ordered_records.extend(
-            _collect_latest_matches(scouted_records, seen_matches, limit)
+        latest_matches = _collect_latest_matches(
+            scouted_records, seen_matches, limit
         )
+        _apply_calculated_fields(
+            latest_matches, auto_weights, teleop_weights, endgame_points
+        )
+        ordered_records.extend(latest_matches)
 
     if len(seen_matches) < limit and prescout_model is not None:
+        prescout_auto_weights = resolve_weight_mapping(
+            prescout_model, MATCH_MODEL_AUTO_WEIGHTS_ATTR, DEFAULT_AUTO_WEIGHTS
+        )
+        prescout_teleop_weights = resolve_weight_mapping(
+            prescout_model, MATCH_MODEL_TELEOP_WEIGHTS_ATTR, DEFAULT_TELEOP_WEIGHTS
+        )
+        prescout_endgame_points = resolve_endgame_points_mapping(
+            prescout_model, MATCH_MODEL_ENDGAME_POINTS_ATTR, DEFAULT_ENDGAME_POINTS
+        )
+
         prescout_records = await _fetch_match_records(
             session, prescout_model, event_key, membership.organization_id
         )
-        ordered_records.extend(
-            _collect_latest_matches(prescout_records, seen_matches, limit)
+        latest_prescout = _collect_latest_matches(
+            prescout_records, seen_matches, limit
         )
+        _apply_calculated_fields(
+            latest_prescout,
+            prescout_auto_weights,
+            prescout_teleop_weights,
+            prescout_endgame_points,
+        )
+        ordered_records.extend(latest_prescout)
 
     return ordered_records
 

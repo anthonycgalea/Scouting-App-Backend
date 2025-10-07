@@ -27,6 +27,12 @@ from models import (
     EventRankings,
     StatboticsData,
 )
+from services.scoring import (
+    calculate_endgame_points,
+    extract_field_value,
+    resolve_endgame_points_mapping,
+    resolve_weight_mapping,
+)
 from services.season import get_season_by_year_or_404
 
 class MatchScheduleResponse(SQLModel):
@@ -351,64 +357,6 @@ def _initialize_count_lists(field_mapping: Tuple[Tuple[str, str], ...]) -> Dict[
     return {field: [] for field, _ in field_mapping}
 
 
-def _resolve_weight_mapping(
-    match_model: type[SQLModel],
-    attribute_name: str,
-    default: Dict[str, float],
-) -> Dict[str, float]:
-    mapping = getattr(match_model, attribute_name, None)
-    if isinstance(mapping, dict) and mapping:
-        resolved: Dict[str, float] = {}
-        for key, value in mapping.items():
-            try:
-                resolved[str(key)] = float(value)
-            except (TypeError, ValueError):
-                continue
-        if resolved:
-            return resolved
-    return {key: float(value) for key, value in default.items()}
-
-
-def _resolve_endgame_points_mapping(
-    match_model: type[SQLModel],
-) -> Dict[str, float]:
-    mapping = getattr(match_model, MATCH_MODEL_ENDGAME_POINTS_ATTR, None)
-    if isinstance(mapping, dict) and mapping:
-        resolved: Dict[str, float] = {}
-        for key, value in mapping.items():
-            try:
-                resolved[str(key).upper()] = float(value)
-            except (TypeError, ValueError):
-                continue
-        if resolved:
-            return resolved
-    return {key: float(value) for key, value in DEFAULT_ENDGAME_POINTS.items()}
-
-
-def _to_float(value: Any) -> float:
-    if value is None:
-        return 0.0
-    if isinstance(value, Enum):
-        value = value.value
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _extract_field_value(record: SQLModel, field_name: str) -> float:
-    return _to_float(getattr(record, field_name, 0))
-
-
-def _calculate_endgame_points(value: Any, mapping: Dict[str, float]) -> float:
-    if isinstance(value, Enum):
-        value = value.value
-    if value is None:
-        return 0.0
-    normalized = str(value).upper()
-    return float(mapping.get(normalized, 0.0))
-
-
 def _phase_metrics_from_lists(metric_lists: Dict[str, List[float]]) -> PhaseMetrics:
     return PhaseMetrics(
         level4=_calculate_metric_statistics(metric_lists["level4"]),
@@ -450,34 +398,34 @@ def _build_team_preview_from_records(
         teleop_total = 0.0
 
         for field, alias in AUTO_LEVEL_FIELDS:
-            count = _extract_field_value(record, field)
+            count = extract_field_value(record, field)
             auto_count_lists[field].append(count)
             auto_metric_lists[alias].append(count)
             points = count * auto_weights.get(field, 0.0)
             auto_total += points
 
         for field, alias in AUTO_ADDITIONAL_FIELDS:
-            count = _extract_field_value(record, field)
+            count = extract_field_value(record, field)
             auto_metric_lists[alias].append(count)
             auto_total += count * auto_weights.get(field, 0.0)
 
         auto_metric_lists["total_points"].append(auto_total)
 
         for field, alias in TELEOP_LEVEL_FIELDS:
-            count = _extract_field_value(record, field)
+            count = extract_field_value(record, field)
             teleop_count_lists[field].append(count)
             teleop_metric_lists[alias].append(count)
             points = count * teleop_weights.get(field, 0.0)
             teleop_total += points
 
         for field, alias in TELEOP_ADDITIONAL_FIELDS:
-            count = _extract_field_value(record, field)
+            count = extract_field_value(record, field)
             teleop_metric_lists[alias].append(count)
             teleop_total += count * teleop_weights.get(field, 0.0)
 
         teleop_metric_lists["total_points"].append(teleop_total)
 
-        endgame_value = _calculate_endgame_points(getattr(record, "endgame", None), endgame_points)
+        endgame_value = calculate_endgame_points(getattr(record, "endgame", None), endgame_points)
         endgame_values.append(endgame_value)
         total_match_points.append(auto_total + teleop_total + endgame_value)
 
@@ -629,9 +577,9 @@ async def get_match_preview(
             detail="Match data is not available for this event",
         )
 
-    auto_weights = _resolve_weight_mapping(match_model, MATCH_MODEL_AUTO_WEIGHTS_ATTR, DEFAULT_AUTO_WEIGHTS)
-    teleop_weights = _resolve_weight_mapping(match_model, MATCH_MODEL_TELEOP_WEIGHTS_ATTR, DEFAULT_TELEOP_WEIGHTS)
-    endgame_points = _resolve_endgame_points_mapping(match_model)
+    auto_weights = resolve_weight_mapping(match_model, MATCH_MODEL_AUTO_WEIGHTS_ATTR, DEFAULT_AUTO_WEIGHTS)
+    teleop_weights = resolve_weight_mapping(match_model, MATCH_MODEL_TELEOP_WEIGHTS_ATTR, DEFAULT_TELEOP_WEIGHTS)
+    endgame_points = resolve_endgame_points_mapping(match_model, MATCH_MODEL_ENDGAME_POINTS_ATTR, DEFAULT_ENDGAME_POINTS)
 
     red_teams = [match.red1_id, match.red2_id, match.red3_id]
     blue_teams = [match.blue1_id, match.blue2_id, match.blue3_id]

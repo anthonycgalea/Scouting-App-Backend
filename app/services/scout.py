@@ -175,10 +175,14 @@ async def _prepare_match_update(
     if membership is None:
         raise HTTPException(status_code=404, detail="Organization membership not found")
 
-    if base_match.organization_id != membership.organization_id:
+    alliance_organization_ids = await get_scouting_alliance_organization_ids(
+        session, event_key, membership.organization_id
+    )
+
+    if base_match.organization_id not in alliance_organization_ids:
         raise HTTPException(
             status_code=403,
-            detail="Match data does not belong to the active organization",
+            detail="Match data does not belong to the active organization or its scouting alliances",
         )
 
     event = await get_event_or_404(session, event_key)
@@ -204,13 +208,15 @@ async def _prepare_match_update(
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail="Invalid match data for this event") from exc
 
+    alliance_organization_ids_tuple = tuple(alliance_organization_ids)
+
     statement = select(match_model).where(
         match_model.event_key == base_match.event_key,
         match_model.match_number == base_match.match_number,
         match_model.match_level == base_match.match_level,
         match_model.team_number == base_match.team_number,
         match_model.user_id == base_match.user_id,
-        match_model.organization_id == membership.organization_id,
+        match_model.organization_id.in_(alliance_organization_ids_tuple),
     )
 
     result = await session.execute(statement)
@@ -222,7 +228,15 @@ async def _prepare_match_update(
     if getattr(stored_match, "season", None) != base_match.season:
         raise HTTPException(status_code=400, detail="Season mismatch for match data update")
 
-    return base_match, match_payload, match_model, membership, typed_match, stored_match
+    return (
+        base_match,
+        match_payload,
+        match_model,
+        membership,
+        typed_match,
+        stored_match,
+        alliance_organization_ids,
+    )
 
 
 def _apply_match_update(
@@ -683,6 +697,7 @@ async def update_match_data_and_mark_validation_valid(
         membership,
         typed_match,
         stored_match,
+        alliance_organization_ids,
     ) = await _prepare_match_update(session, user, match)
 
     payload = _model_dump(typed_match)
@@ -690,13 +705,15 @@ async def update_match_data_and_mark_validation_valid(
 
     session.add(stored_match)
 
+    alliance_organization_ids_tuple = tuple(alliance_organization_ids)
+
     validation_statement = select(DataValidation).where(
         DataValidation.event_key == base_match.event_key,
         DataValidation.match_number == base_match.match_number,
         DataValidation.match_level == base_match.match_level,
         DataValidation.team_number == base_match.team_number,
         DataValidation.user_id == base_match.user_id,
-        DataValidation.organization_id == membership.organization_id,
+        DataValidation.organization_id.in_(alliance_organization_ids_tuple),
     )
 
     validation_result = await session.execute(validation_statement)
@@ -1435,6 +1452,7 @@ async def update_scouted_match(session: AsyncSession, match: MatchData, user: Us
         _membership,
         typed_match,
         stored_match,
+        _alliance_organization_ids,
     ) = await _prepare_match_update(session, user, match)
 
     updated_payload = _model_dump(typed_match)

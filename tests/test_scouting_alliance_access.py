@@ -6,6 +6,7 @@ from sqlmodel import select
 
 from app.models import (
     DataValidation,
+    Endgame2025,
     FRCEvent,
     MatchData2025,
     MatchPredictions2025,
@@ -20,14 +21,18 @@ from app.models import (
     User,
     UserOrganization,
     UserRole,
+    ValidationStatus,
 )
 from app.services.event import get_scouting_alliance_organization_ids
 from app.services.match_prediction import get_match_prediction_for_user_organization
 from app.services.scout import (
     DataValidationFilterRequest,
+    DataValidationUpdateRequest,
+    batch_update_data_validations,
     get_data_validations_for_active_event,
     get_superscout_records,
     get_superscouted_match_alliances,
+    update_match_data_and_mark_validation_valid,
 )
 from app.services.team import get_match_data_for_team_at_active_event
 from tests.conftest import AsyncSessionLocal
@@ -315,6 +320,166 @@ async def test_data_validation_pull_includes_incoming_allied_records(setup_datab
 
         assert len(records) == 1
         assert records[0].organization_id == context["allied_organization_id"]
+
+
+@pytest.mark.asyncio
+async def test_allied_user_can_update_data_validation(setup_database):
+    context = await _create_alliance_context("2025alliancedvupdate", 9102)
+
+    async with AsyncSessionLocal() as session:
+        team = TeamRecord(teamNumber=6300, teamName="Alliance Update Team")
+        session.add(team)
+        await session.commit()
+
+        match_entry = MatchData2025(
+            season=context["season_id"],
+            team_number=team.team_number,
+            event_key=context["event_key"],
+            match_number=5,
+            match_level="qm",
+            user_id=context["allied_user_id"],
+            organization_id=context["allied_organization_id"],
+            al4c=1,
+            tl4c=1,
+            aNet=0,
+            tProcessor=0,
+            endgame=Endgame2025.NONE,
+        )
+        validation_record = DataValidation(
+            event_key=context["event_key"],
+            match_number=5,
+            match_level="qm",
+            user_id=context["allied_user_id"],
+            team_number=team.team_number,
+            organization_id=context["allied_organization_id"],
+            validation_status=ValidationStatus.PENDING,
+        )
+
+        session.add_all([match_entry, validation_record])
+        await session.commit()
+
+        user_payload = {
+            "id": str(context["primary_user_id"]),
+            "user_org": context["primary_membership_id"],
+        }
+
+        update_request = DataValidationUpdateRequest(
+            matchNumber=5,
+            matchLevel="qm",
+            teamNumber=team.team_number,
+            userId=context["allied_user_id"],
+            validationStatus=ValidationStatus.NEEDS_REVIEW,
+            notes="Alliance review",
+        )
+
+        updated_records = await batch_update_data_validations(
+            session, user_payload, [update_request]
+        )
+
+        assert len(updated_records) == 1
+        updated_record = updated_records[0]
+        assert updated_record.organization_id == context["allied_organization_id"]
+        assert updated_record.validation_status == ValidationStatus.NEEDS_REVIEW
+        assert updated_record.notes == "Alliance review"
+
+        validation_stmt = select(DataValidation).where(
+            DataValidation.event_key == context["event_key"],
+            DataValidation.match_number == 5,
+            DataValidation.match_level == "qm",
+            DataValidation.team_number == team.team_number,
+            DataValidation.user_id == context["allied_user_id"],
+        )
+        validation_result = await session.execute(validation_stmt)
+        stored_validation = validation_result.scalars().first()
+
+        assert stored_validation is not None
+        assert stored_validation.validation_status == ValidationStatus.NEEDS_REVIEW
+        assert stored_validation.notes == "Alliance review"
+
+
+@pytest.mark.asyncio
+async def test_allied_user_can_update_match_data(setup_database):
+    context = await _create_alliance_context("2025alliancematchupdate", 9103)
+
+    async with AsyncSessionLocal() as session:
+        team = TeamRecord(teamNumber=6400, teamName="Alliance Match Team")
+        session.add(team)
+        await session.commit()
+
+        match_entry = MatchData2025(
+            season=context["season_id"],
+            team_number=team.team_number,
+            event_key=context["event_key"],
+            match_number=6,
+            match_level="qm",
+            user_id=context["allied_user_id"],
+            organization_id=context["allied_organization_id"],
+            notes="Original alliance notes",
+            al4c=2,
+            tl4c=1,
+            aNet=1,
+            tProcessor=0,
+            endgame=Endgame2025.PARK,
+        )
+        validation_record = DataValidation(
+            event_key=context["event_key"],
+            match_number=6,
+            match_level="qm",
+            user_id=context["allied_user_id"],
+            team_number=team.team_number,
+            organization_id=context["allied_organization_id"],
+            validation_status=ValidationStatus.PENDING,
+            notes="",
+        )
+
+        session.add_all([match_entry, validation_record])
+        await session.commit()
+
+        user_payload = {
+            "id": str(context["primary_user_id"]),
+            "user_org": context["primary_membership_id"],
+        }
+
+        updated_match = MatchData2025(
+            season=context["season_id"],
+            team_number=team.team_number,
+            event_key=context["event_key"],
+            match_number=6,
+            match_level="qm",
+            user_id=context["allied_user_id"],
+            organization_id=context["allied_organization_id"],
+            notes="Alliance correction",
+            al4c=3,
+            tl4c=2,
+            aNet=1,
+            tProcessor=1,
+            endgame=Endgame2025.DEEP,
+        )
+
+        validation = await update_match_data_and_mark_validation_valid(
+            session, user_payload, updated_match
+        )
+
+        assert validation.organization_id == context["allied_organization_id"]
+        assert validation.validation_status == ValidationStatus.VALID
+        assert validation.notes == "Alliance correction"
+
+        match_stmt = select(MatchData2025).where(
+            MatchData2025.event_key == context["event_key"],
+            MatchData2025.match_number == 6,
+            MatchData2025.match_level == "qm",
+            MatchData2025.team_number == team.team_number,
+            MatchData2025.user_id == context["allied_user_id"],
+        )
+        match_result = await session.execute(match_stmt)
+        stored_match = match_result.scalars().first()
+
+        assert stored_match is not None
+        assert stored_match.al4c == 3
+        assert stored_match.tl4c == 2
+        assert stored_match.tProcessor == 1
+        assert stored_match.endgame == Endgame2025.DEEP
+        assert stored_match.notes == "Original alliance notes"
 
 
 @pytest.mark.asyncio

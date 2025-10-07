@@ -10,7 +10,7 @@ import csv
 import io
 import json
 from html import escape
-from typing import Dict, Iterable, List, Sequence, Tuple, Union
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 from uuid import UUID
 
 
@@ -182,6 +182,7 @@ class OrganizationEventDetail(SQLModel):
     week: int
     isPublic: bool
     isActive: bool
+    orgEventId: Optional[UUID] = None
 
 
 class UpdateOrganizationEventRequest(SQLModel):
@@ -931,6 +932,8 @@ async def get_organization_events(
     events = result.all()
     if not events:
         raise HTTPException(status_code=404, detail="No events found for this organization")
+    is_admin = membership.role == UserRole.ADMIN
+
     return [
         OrganizationEventDetail(
             isPublic=organization_event.public_data,
@@ -938,7 +941,8 @@ async def get_organization_events(
             eventName=frc_event.event_name,
             shortName=frc_event.short_name,
             eventKey=frc_event.event_key,
-            week=frc_event.week
+            week=frc_event.week,
+            orgEventId=organization_event.id if is_admin else None,
         )
         for organization_event, frc_event in events
     ]

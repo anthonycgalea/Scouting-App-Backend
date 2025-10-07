@@ -2,6 +2,7 @@ from datetime import datetime
 from uuid import uuid4
 
 import pytest
+from sqlmodel import select
 
 from app.models import (
     DataValidation,
@@ -20,6 +21,7 @@ from app.models import (
     UserOrganization,
     UserRole,
 )
+from app.services.event import get_scouting_alliance_organization_ids
 from app.services.match_prediction import get_match_prediction_for_user_organization
 from app.services.scout import (
     DataValidationFilterRequest,
@@ -32,7 +34,11 @@ from tests.conftest import AsyncSessionLocal
 
 
 async def _create_alliance_context(
-    event_key: str, season_id: int, *, alliance_from_primary: bool = True
+    event_key: str,
+    season_id: int,
+    *,
+    alliance_from_primary: bool = True,
+    invite_status: OrgEventAllianceInviteStatus = OrgEventAllianceInviteStatus.ACCEPTED,
 ) -> dict:
     async with AsyncSessionLocal() as session:
         now = datetime.utcnow()
@@ -114,7 +120,7 @@ async def _create_alliance_context(
             other_organization_id=(
                 allied_org.id if alliance_from_primary else primary_org.id
             ),
-            org_invite_status=OrgEventAllianceInviteStatus.ACCEPTED,
+            org_invite_status=invite_status,
         )
         session.add(alliance)
         await session.commit()
@@ -339,3 +345,45 @@ async def test_match_prediction_fetches_allied_results(setup_database):
 
         assert record.organization_id == context["allied_organization_id"]
         assert record.red_alliance_win_pct == pytest.approx(0.65)
+
+
+@pytest.mark.asyncio
+async def test_removed_alliance_not_accessible(setup_database):
+    context = await _create_alliance_context(
+        "2025alliancedcl",
+        9005,
+        invite_status=OrgEventAllianceInviteStatus.PENDING,
+    )
+
+    async with AsyncSessionLocal() as session:
+        primary_event = (
+            await session.exec(
+                select(OrganizationEvent).where(
+                    OrganizationEvent.organization_id
+                    == context["primary_organization_id"],
+                    OrganizationEvent.event_key == context["event_key"],
+                )
+            )
+        ).one()
+
+        alliance = (
+            await session.exec(
+                select(OrganizationEventAlliance).where(
+                    OrganizationEventAlliance.orgevent_Uid == primary_event.id,
+                    OrganizationEventAlliance.other_organization_id
+                    == context["allied_organization_id"],
+                )
+            )
+        ).one()
+
+        await session.delete(alliance)
+        await session.commit()
+
+    async with AsyncSessionLocal() as session:
+        accessible = await get_scouting_alliance_organization_ids(
+            session,
+            context["event_key"],
+            context["primary_organization_id"],
+        )
+
+    assert accessible == {context["primary_organization_id"]}

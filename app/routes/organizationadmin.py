@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, File
+from fastapi import APIRouter, Body, Depends, HTTPException, Response, UploadFile, File
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import SQLModel, delete, select
 from datetime import datetime
@@ -418,6 +418,64 @@ async def accept_organization_collaboration(
         eventWeek=event.week,
         eventYear=event.year,
     )
+
+
+@router.delete(
+    "/collab",
+    response_model=OrganizationCollaborationResponse,
+)
+async def decline_organization_collaboration(
+    payload: OrganizationCollaborationAcceptRequest = Body(...),
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> OrganizationCollaborationResponse:
+    membership = await require_lead_or_admin_membership(session, user)
+
+    statement = select(OrganizationEventAlliance).where(
+        OrganizationEventAlliance.orgevent_Uid == payload.organizationEventId,
+        OrganizationEventAlliance.other_organization_id == membership.organization_id,
+    )
+    alliance = (await session.exec(statement)).one_or_none()
+
+    if alliance is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Collaboration invitation not found",
+        )
+
+    if alliance.org_invite_status != OrgEventAllianceInviteStatus.PENDING:
+        raise HTTPException(
+            status_code=409,
+            detail="Collaboration invitation already responded to",
+        )
+
+    inviting_event = await session.get(OrganizationEvent, alliance.orgevent_Uid)
+    if inviting_event is None:
+        raise HTTPException(status_code=404, detail="Inviting event not found")
+
+    event = await session.get(FRCEvent, inviting_event.event_key)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Inviting event not found")
+
+    inviting_org = await session.get(Organization, inviting_event.organization_id)
+    if inviting_org is None:
+        raise HTTPException(status_code=404, detail="Inviting organization not found")
+
+    response = OrganizationCollaborationResponse(
+        organizationEventId=alliance.orgevent_Uid,
+        organizationId=alliance.other_organization_id,
+        status=alliance.org_invite_status,
+        organizationName=inviting_org.name,
+        teamNumber=inviting_org.team_number,
+        eventName=event.event_name,
+        eventWeek=event.week,
+        eventYear=event.year,
+    )
+
+    await session.delete(alliance)
+    await session.commit()
+
+    return response
 
 
 @router.post("/downloadData")

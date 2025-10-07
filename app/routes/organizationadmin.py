@@ -393,8 +393,6 @@ async def accept_organization_collaboration(
 
     alliance.org_invite_status = OrgEventAllianceInviteStatus.ACCEPTED
     session.add(alliance)
-    await session.commit()
-    await session.refresh(alliance)
 
     inviting_event = await session.get(OrganizationEvent, alliance.orgevent_Uid)
     if inviting_event is None:
@@ -407,6 +405,42 @@ async def accept_organization_collaboration(
     inviting_org = await session.get(Organization, inviting_event.organization_id)
     if inviting_org is None:
         raise HTTPException(status_code=404, detail="Inviting organization not found")
+
+    existing_event_statement = select(OrganizationEvent).where(
+        OrganizationEvent.organization_id == membership.organization_id,
+        OrganizationEvent.event_key == inviting_event.event_key,
+    )
+    existing_event = (await session.exec(existing_event_statement)).one_or_none()
+
+    if existing_event is None:
+        accepting_org_event = OrganizationEvent(
+            organization_id=membership.organization_id,
+            event_key=inviting_event.event_key,
+        )
+        session.add(accepting_org_event)
+        await session.flush()
+    else:
+        accepting_org_event = existing_event
+
+    reverse_alliance_statement = select(OrganizationEventAlliance).where(
+        OrganizationEventAlliance.orgevent_Uid == accepting_org_event.id,
+        OrganizationEventAlliance.other_organization_id == inviting_event.organization_id,
+    )
+    reverse_alliance = (await session.exec(reverse_alliance_statement)).one_or_none()
+
+    if reverse_alliance is None:
+        reverse_alliance = OrganizationEventAlliance(
+            orgevent_Uid=accepting_org_event.id,
+            other_organization_id=inviting_event.organization_id,
+            org_invite_status=OrgEventAllianceInviteStatus.ACCEPTED,
+        )
+    else:
+        reverse_alliance.org_invite_status = OrgEventAllianceInviteStatus.ACCEPTED
+
+    session.add(reverse_alliance)
+
+    await session.commit()
+    await session.refresh(alliance)
 
     return OrganizationCollaborationResponse(
         organizationEventId=alliance.orgevent_Uid,

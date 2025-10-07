@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, File
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlmodel import select, SQLModel
+from sqlmodel import SQLModel, delete, select
 from datetime import datetime
 from auth.dependencies import get_current_user
 from db.database import get_session
@@ -140,15 +140,23 @@ router = APIRouter(
 )
 
 from models import (
+    DataValidation,
+    FRCEvent,
+    MatchData2025,
+    MatchData2026,
+    MatchPredictions2025,
+    MatchSchedule,
     Organization,
     OrganizationEvent,
     OrganizationEventAlliance,
     OrgEventAllianceInviteStatus,
-    FRCEvent,
-    MatchSchedule,
+    PickList,
+    PickListRank,
+    PitScout2025,
+    Prescout2025,
+    SuperScoutData2025,
     User,
     UserOrganization,
-    MatchData2025,
     Endgame2025,
 )
 from models.user_organization import UserRole
@@ -157,6 +165,7 @@ from services.event import (
     MatchExportType,
     get_active_event_key_for_user,
     get_match_data_for_event_or_404,
+    get_user_membership_or_404,
     require_lead_or_admin_membership,
     serialize_match_data_for_export,
 )
@@ -217,6 +226,10 @@ class OrganizationCollaborationResponse(SQLModel):
 
 class OrganizationMemberDeleteRequest(SQLModel):
     userId: UUID
+
+
+class DeleteOrganizationEventRequest(SQLModel):
+    organization_event_id: UUID
 
 
 class OrganizationApplicationDeleteRequest(SQLModel):
@@ -998,6 +1011,107 @@ async def update_organization_events(
     await session.commit()
 
     return {"status": "success"}
+
+
+@router.delete("/event", status_code=204)
+async def delete_organization_event(
+    payload: DeleteOrganizationEventRequest,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    membership = await get_user_membership_or_404(session, user)
+
+    if membership.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail="Only organization admins can delete organization events",
+        )
+
+    statement = select(OrganizationEvent).where(
+        OrganizationEvent.id == payload.organization_event_id
+    )
+    result = await session.exec(statement)
+    organization_event = result.first()
+
+    if organization_event is None:
+        raise HTTPException(status_code=404, detail="Organization event not found")
+
+    if organization_event.organization_id != membership.organization_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Organization event does not belong to this organization",
+        )
+
+    event_key = organization_event.event_key
+    organization_id = organization_event.organization_id
+
+    await session.execute(
+        delete(OrganizationEventAlliance).where(
+            OrganizationEventAlliance.orgevent_Uid == organization_event.id
+        )
+    )
+
+    await session.execute(
+        delete(MatchData2025).where(
+            MatchData2025.event_key == event_key,
+            MatchData2025.organization_id == organization_id,
+        )
+    )
+    await session.execute(
+        delete(MatchData2026).where(
+            MatchData2026.event_key == event_key,
+            MatchData2026.organization_id == organization_id,
+        )
+    )
+    await session.execute(
+        delete(Prescout2025).where(
+            Prescout2025.event_key == event_key,
+            Prescout2025.organization_id == organization_id,
+        )
+    )
+    await session.execute(
+        delete(DataValidation).where(
+            DataValidation.event_key == event_key,
+            DataValidation.organization_id == organization_id,
+        )
+    )
+    await session.execute(
+        delete(PitScout2025).where(
+            PitScout2025.event_key == event_key,
+            PitScout2025.organization_id == organization_id,
+        )
+    )
+    await session.execute(
+        delete(SuperScoutData2025).where(
+            SuperScoutData2025.event_key == event_key,
+            SuperScoutData2025.organization_id == organization_id,
+        )
+    )
+    await session.execute(
+        delete(MatchPredictions2025).where(
+            MatchPredictions2025.event_key == event_key,
+            MatchPredictions2025.organization_id == organization_id,
+        )
+    )
+
+    picklist_result = await session.exec(
+        select(PickList.id).where(
+            PickList.organization_id == organization_id,
+            PickList.event_key == event_key,
+        )
+    )
+    picklist_ids = list(picklist_result.scalars().all())
+
+    if picklist_ids:
+        await session.execute(
+            delete(PickListRank).where(PickListRank.picklist_id.in_(picklist_ids))
+        )
+        await session.execute(delete(PickList).where(PickList.id.in_(picklist_ids)))
+
+    await session.delete(organization_event)
+    await session.commit()
+
+    return Response(status_code=204)
 
 
 @router.patch("/members")

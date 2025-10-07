@@ -10,6 +10,7 @@ from app.models import (
     Organization,
     OrganizationEvent,
     Season,
+    StatboticsData,
     TeamRecord,
     User,
     UserOrganization,
@@ -124,3 +125,91 @@ async def test_weighted_statistics_include_calculated_point_fields(setup_databas
         assert auto_std == pytest.approx(1.5)
         assert teleop_std == pytest.approx(1.5)
         assert endgame_std == pytest.approx(2.0)
+
+
+@pytest.mark.asyncio
+async def test_statbotics_data_supplements_weighted_statistics(setup_database):
+    async with AsyncSessionLocal() as session:
+        season = Season(id=199, year=2025, name="REEFSCAPE Statbotics")
+        event = FRCEvent(
+            event_key="2025statbotics",
+            event_name="Statbotics Event",
+            short_name="Statbotics",
+            year=2025,
+            week=1,
+        )
+        organization = Organization(name="Stat Org", team_number=4321)
+        now = datetime.utcnow()
+        user_id = uuid4()
+        user = User(
+            id=user_id,
+            email="stat@example.com",
+            auth_provider="discord",
+            display_name="Stat User",
+            logged_in_user_org=None,
+            created_at=now,
+            updated_at=now,
+        )
+        team_record = TeamRecord(team_number=4321, team_name="Team 4321")
+
+        session.add_all([season, event, organization, user, team_record])
+        await session.commit()
+        await session.refresh(organization)
+
+        membership = UserOrganization(
+            user_id=user_id,
+            organization_id=organization.id,
+            role=UserRole.MEMBER,
+        )
+        session.add(membership)
+        await session.commit()
+        await session.refresh(membership)
+
+        organization_event = OrganizationEvent(
+            organization_id=organization.id,
+            event_key=event.event_key,
+            public_data=True,
+            active=True,
+        )
+        session.add(organization_event)
+
+        match = MatchData2025(
+            season=season.id,
+            team_number=team_record.team_number,
+            event_key=event.event_key,
+            match_number=1,
+            match_level="qm",
+            user_id=user_id,
+            organization_id=organization.id,
+            al4c=1,
+            tl4c=1,
+            endgame=Endgame2025.PARK,
+        )
+        session.add(match)
+
+        statbotics_record = StatboticsData(
+            event_key=event.event_key,
+            team_number=team_record.team_number,
+            total_points=30.0,
+            auto_points=10.0,
+            teleop_points=8.0,
+            endgame_points=6.0,
+        )
+        session.add(statbotics_record)
+
+        await session.commit()
+
+        user_payload = {"id": str(user_id), "user_org": membership.id}
+
+        result = await calculate_weighted_match_statistics(session, user_payload)
+
+        assert result["sample_size"] == 1
+        statistics = result["statistics"]
+
+        auto_average = statistics["autonomous_points"]["weighted_average"]
+        teleop_average = statistics["teleop_points"]["weighted_average"]
+        endgame_average = statistics["endgame_points"]["weighted_average"]
+
+        assert auto_average == pytest.approx(221 / 23)
+        assert teleop_average == pytest.approx(175 / 23)
+        assert endgame_average == pytest.approx(126 / 23)

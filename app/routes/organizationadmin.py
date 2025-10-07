@@ -226,6 +226,9 @@ class OrganizationCollaborationResponse(SQLModel):
     status: OrgEventAllianceInviteStatus
     organizationName: str
     teamNumber: Optional[int]
+    eventName: str
+    eventWeek: int
+    eventYear: int
 
 
 class OrganizationMemberDeleteRequest(SQLModel):
@@ -300,6 +303,10 @@ async def create_organization_collaboration(
     await session.commit()
     await session.refresh(alliance)
 
+    event = await session.get(FRCEvent, org_event.event_key)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Inviting event not found")
+
     inviting_org = await session.get(Organization, membership.organization_id)
     if inviting_org is None:
         raise HTTPException(status_code=404, detail="Inviting organization not found")
@@ -310,6 +317,9 @@ async def create_organization_collaboration(
         status=alliance.org_invite_status,
         organizationName=inviting_org.name,
         teamNumber=inviting_org.team_number,
+        eventName=event.event_name,
+        eventWeek=event.week,
+        eventYear=event.year,
     )
 
 
@@ -329,6 +339,10 @@ async def get_organization_collaborations(
     )
     alliances = (await session.exec(statement)).all()
 
+    event = await session.get(FRCEvent, org_event.event_key)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Inviting event not found")
+
     inviting_org = await session.get(Organization, membership.organization_id)
     if inviting_org is None:
         raise HTTPException(status_code=404, detail="Inviting organization not found")
@@ -340,6 +354,9 @@ async def get_organization_collaborations(
             status=alliance.org_invite_status,
             organizationName=inviting_org.name,
             teamNumber=inviting_org.team_number,
+            eventName=event.event_name,
+            eventWeek=event.week,
+            eventYear=event.year,
         )
         for alliance in alliances
     ]
@@ -383,6 +400,10 @@ async def accept_organization_collaboration(
     if inviting_event is None:
         raise HTTPException(status_code=404, detail="Inviting event not found")
 
+    event = await session.get(FRCEvent, inviting_event.event_key)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Inviting event not found")
+
     inviting_org = await session.get(Organization, inviting_event.organization_id)
     if inviting_org is None:
         raise HTTPException(status_code=404, detail="Inviting organization not found")
@@ -393,6 +414,9 @@ async def accept_organization_collaboration(
         status=alliance.org_invite_status,
         organizationName=inviting_org.name,
         teamNumber=inviting_org.team_number,
+        eventName=event.event_name,
+        eventWeek=event.week,
+        eventYear=event.year,
     )
 
 

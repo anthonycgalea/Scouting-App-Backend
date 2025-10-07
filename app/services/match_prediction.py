@@ -284,6 +284,15 @@ def _apply_calculated_fields(
         return
 
     for record in records:
+        if getattr(record, "__pydantic_extra__", None) is None:
+            # Ensure Pydantic models fetched from the database have a mutable
+            # ``__pydantic_extra__`` container before assigning dynamic
+            # attributes.  With Pydantic v2 SQLModel instances may initialise
+            # ``__pydantic_extra__`` as ``None`` when ``extra='allow'`` is set
+            # on the base model, which would otherwise raise a ``TypeError``
+            # when we try to attach calculated fields.
+            object.__setattr__(record, "__pydantic_extra__", {})
+
         autonomous_points = calculate_phase_points(record, auto_weights)
         teleop_points = calculate_phase_points(record, teleop_weights)
         endgame_points_total = calculate_endgame_points(

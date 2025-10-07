@@ -230,7 +230,7 @@ class OrganizationMemberDeleteRequest(SQLModel):
 
 
 class DeleteOrganizationEventRequest(SQLModel):
-    eventCode: str
+    eventKey: str
 
 
 class OrganizationApplicationDeleteRequest(SQLModel):
@@ -1032,7 +1032,7 @@ async def delete_organization_event(
         )
 
     statement = select(OrganizationEvent).where(
-        OrganizationEvent.event_key == payload.eventCode,
+        OrganizationEvent.event_key == payload.eventKey,
         OrganizationEvent.organization_id == membership.organization_id,
     )
     result = await session.exec(statement)
@@ -1102,7 +1102,7 @@ async def delete_organization_event(
             PickList.event_key == event_key,
         )
     )
-    picklist_ids = list(picklist_result.scalars().all())
+    picklist_ids = picklist_result.all()
 
     if picklist_ids:
         await session.execute(

@@ -8,6 +8,8 @@ from .match_data import MatchData
 from .match_data_2025 import Endgame2025, MatchData2025, Prescout2025
 from .match_data_2026 import MatchData2026
 from .match_schedule import MatchSchedule
+from .match_predictions import MatchPredictions
+from .match_predictions_2025 import MatchPredictions2025
 from .organization import Organization
 from .organization_event import OrganizationEvent
 from .organization_feature_settings import OrganizationFeatureSettings

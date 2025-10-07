@@ -1,4 +1,4 @@
-from match_predictions import MatchPredictions
+from .match_predictions import MatchPredictions
 from sqlmodel import Field
 
 

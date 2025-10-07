@@ -539,6 +539,48 @@ async def calculate_weighted_match_statistics(
     return {"sample_size": len(matches), "statistics": statistics}
 
 
+async def get_match_prediction_for_user_organization(
+    session: AsyncSession,
+    user: Any,
+    match_level: str,
+    match_number: int,
+):
+    """Return the stored match prediction for the user's organization.
+
+    The lookup uses the active event configured for the organization the user is
+    logged into. A ``404`` is raised when predictions are unavailable for the
+    event year or when no prediction has been generated for the requested match.
+    """
+
+    user_payload = _normalize_user_payload(user)
+
+    event_key = await get_active_event_key_for_user(session, user_payload)
+    event = await get_event_or_404(session, event_key)
+    membership = await _get_user_membership_or_404(session, user_payload)
+
+    prediction_model = MATCH_PREDICTION_MODELS_BY_YEAR.get(event.year)
+    if prediction_model is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Match predictions are not available for this event year",
+        )
+
+    prediction = await session.get(
+        prediction_model,
+        (
+            event_key,
+            int(match_number),
+            match_level,
+            int(membership.organization_id),
+        ),
+    )
+
+    if prediction is None:
+        raise HTTPException(status_code=404, detail="Match prediction not found")
+
+    return prediction
+
+
 async def simulate_match_prediction(
     session: AsyncSession,
     event_code: str,

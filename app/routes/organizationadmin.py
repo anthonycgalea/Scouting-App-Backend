@@ -362,6 +362,53 @@ async def get_organization_collaborations(
     ]
 
 
+@router.get(
+    "/collab/requests",
+    response_model=List[OrganizationCollaborationResponse],
+)
+async def get_requested_organization_collaborations(
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> List[OrganizationCollaborationResponse]:
+    membership = await require_lead_or_admin_membership(session, user)
+
+    statement = select(OrganizationEventAlliance).where(
+        OrganizationEventAlliance.other_organization_id == membership.organization_id,
+        OrganizationEventAlliance.org_invite_status == OrgEventAllianceInviteStatus.PENDING,
+    )
+    alliances = (await session.exec(statement)).all()
+
+    responses: List[OrganizationCollaborationResponse] = []
+
+    for alliance in alliances:
+        inviting_event = await session.get(OrganizationEvent, alliance.orgevent_Uid)
+        if inviting_event is None:
+            raise HTTPException(status_code=404, detail="Inviting event not found")
+
+        inviting_org = await session.get(Organization, inviting_event.organization_id)
+        if inviting_org is None:
+            raise HTTPException(status_code=404, detail="Inviting organization not found")
+
+        event = await session.get(FRCEvent, inviting_event.event_key)
+        if event is None:
+            raise HTTPException(status_code=404, detail="Inviting event not found")
+
+        responses.append(
+            OrganizationCollaborationResponse(
+                organizationEventId=alliance.orgevent_Uid,
+                organizationId=inviting_org.id,
+                status=alliance.org_invite_status,
+                organizationName=inviting_org.name,
+                teamNumber=inviting_org.team_number,
+                eventName=event.event_name,
+                eventWeek=event.week,
+                eventYear=event.year,
+            )
+        )
+
+    return responses
+
+
 @router.patch(
     "/collab",
     response_model=OrganizationCollaborationResponse,

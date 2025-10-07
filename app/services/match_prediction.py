@@ -239,6 +239,39 @@ async def _get_team_statistics(
 
     total_mean, total_std = _compute_weighted_statistics(records, statbotics_total)
 
+    def _extract_climb_probability(record: MatchData) -> float | None:
+        raw_probability = getattr(record, "climb_rate", None)
+        if raw_probability is None:
+            raw_probability = getattr(record, "climb_success", None)
+
+        if raw_probability is None:
+            endgame_value = getattr(record, "endgame", None)
+            if endgame_value is not None:
+                normalized = str(getattr(endgame_value, "value", endgame_value)).upper()
+                raw_probability = 1.0 if normalized == "DEEP" else 0.0
+
+        if raw_probability is None:
+            endgame_points_value = getattr(record, "endgame_points", None)
+            if endgame_points_value is not None:
+                try:
+                    raw_probability = 1.0 if float(endgame_points_value) >= 12.0 else 0.0
+                except (TypeError, ValueError):
+                    return None
+
+        if raw_probability is None:
+            return None
+
+        try:
+            probability = float(raw_probability)
+        except (TypeError, ValueError):
+            return None
+
+        if probability < 0.0:
+            return 0.0
+        if probability > 1.0:
+            return 1.0
+        return probability
+
     auto_coral_mean, auto_coral_std = _compute_weighted_metric(
         records, lambda record: _sum_record_fields(record, ("al4c", "al3c", "al2c", "al1c"))
     )
@@ -266,12 +299,23 @@ async def _get_team_statistics(
         records, lambda record: getattr(record, "endgame_points", 0.0)
     )
 
+    climb_rate_mean, climb_rate_std = _compute_weighted_metric(
+        records, _extract_climb_probability
+    )
+
+    base_total_mean = total_mean - (climb_rate_mean * 12.0)
+    climb_variance = 144.0 * climb_rate_mean * (1.0 - climb_rate_mean)
+    base_total_variance = max(0.0, total_std**2 - climb_variance)
+    base_total_std = sqrt(base_total_variance)
+
     return {
         "total": (total_mean, total_std),
+        "total_without_climb": (base_total_mean, base_total_std),
         "auto_coral": (auto_coral_mean, auto_coral_std),
         "total_coral": (total_coral_mean, total_coral_std),
         "processor": (processor_mean, processor_std),
         "endgame": (endgame_mean, endgame_std),
+        "climb_rate": (climb_rate_mean, climb_rate_std),
     }
 
 def _apply_calculated_fields(
@@ -302,9 +346,13 @@ def _apply_calculated_fields(
         record.autonomous_points = autonomous_points
         record.teleop_points = teleop_points
         record.endgame_points = endgame_points_total
+        climb_points = 12.0 if endgame_points_total >= 12.0 else 0.0
+        record.climb_points = climb_points
+        record.climb_success = 1.0 if climb_points >= 12.0 else 0.0
         record.total_points = (
             autonomous_points + teleop_points + endgame_points_total
         )
+        record.total_points_without_climb = record.total_points - climb_points
 
 
 def _normalize_user_payload(user: Any) -> Dict[str, Any]:
@@ -675,17 +723,39 @@ async def simulate_match_prediction(
                 samples += team_samples
             return samples
 
-        red_total_samples = _generate_alliance_samples(red_stats, "total")
-        blue_total_samples = _generate_alliance_samples(blue_stats, "total")
+        red_total_samples = _generate_alliance_samples(red_stats, "total_without_climb")
+        blue_total_samples = _generate_alliance_samples(blue_stats, "total_without_climb")
+
+        def _sample_alliance_climb(
+            team_statistics: Sequence[Dict[str, Tuple[float, float]]]
+        ) -> Tuple[np.ndarray, np.ndarray]:
+            climb_points = np.zeros(n_samples)
+            any_climb = np.zeros(n_samples, dtype=bool)
+
+            for stats in team_statistics:
+                climb_rate = float(stats.get("climb_rate", (0.0, 0.0))[0])
+                if climb_rate <= 0.0:
+                    continue
+                probability = min(max(climb_rate, 0.0), 1.0)
+                team_success = rng.random(n_samples) < probability
+                if not np.any(team_success):
+                    continue
+                climb_points += team_success.astype(float) * 12.0
+                any_climb = np.logical_or(any_climb, team_success)
+
+            return climb_points, any_climb
+
+        red_climb_points, red_any_climb = _sample_alliance_climb(red_stats)
+        blue_climb_points, blue_any_climb = _sample_alliance_climb(blue_stats)
+
+        red_total_samples += red_climb_points
+        blue_total_samples += blue_climb_points
 
         red_win_pct = float(np.mean(red_total_samples > blue_total_samples))
         blue_win_pct = 1.0 - red_win_pct
 
         red_auto_coral_samples = _generate_alliance_samples(red_stats, "auto_coral")
         blue_auto_coral_samples = _generate_alliance_samples(blue_stats, "auto_coral")
-
-        red_endgame_samples = _generate_alliance_samples(red_stats, "endgame")
-        blue_endgame_samples = _generate_alliance_samples(blue_stats, "endgame")
 
         red_total_coral_samples = _generate_alliance_samples(red_stats, "total_coral")
         blue_total_coral_samples = _generate_alliance_samples(blue_stats, "total_coral")
@@ -696,8 +766,8 @@ async def simulate_match_prediction(
         red_auto_rp = float(np.mean(red_auto_coral_samples >= 1.0))
         blue_auto_rp = float(np.mean(blue_auto_coral_samples >= 1.0))
 
-        red_endgame_rp = float(np.mean(red_endgame_samples >= 12.0))
-        blue_endgame_rp = float(np.mean(blue_endgame_samples >= 12.0))
+        red_endgame_rp = float(np.mean(red_any_climb))
+        blue_endgame_rp = float(np.mean(blue_any_climb))
 
         red_w_coral_rp = float(np.mean(red_total_coral_samples >= 27.0))
         blue_w_coral_rp = float(np.mean(blue_total_coral_samples >= 27.0))

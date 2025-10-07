@@ -1,12 +1,14 @@
 from datetime import datetime
 from uuid import uuid4
 
+import numpy as np
 import pytest
 
 from app.models import (
     Endgame2025,
     FRCEvent,
     MatchData2025,
+    MatchSchedule,
     Organization,
     OrganizationEvent,
     Season,
@@ -19,6 +21,7 @@ from app.models import (
 from app.services.match_prediction import (
     calculate_weighted_match_statistics,
     retrieve_prediction_data,
+    simulate_match_prediction,
 )
 from tests.conftest import AsyncSessionLocal
 
@@ -331,3 +334,101 @@ async def test_missing_statbotics_data_triggers_update(monkeypatch, setup_databa
         assert teleop_average == pytest.approx(360 / 23)
         assert endgame_average == pytest.approx(240 / 23)
         assert total_average == pytest.approx(800 / 23)
+
+
+@pytest.mark.asyncio
+async def test_simulation_uses_climb_probability(monkeypatch, setup_database):
+    async with AsyncSessionLocal() as session:
+        season = Season(id=401, year=2025, name="REEFSCAPE Climb Simulation")
+        event = FRCEvent(
+            event_key="2025climbsim",
+            event_name="Climb Simulation Event",
+            short_name="ClimbSim",
+            year=2025,
+            week=1,
+        )
+
+        organization = Organization(name="Climb Org", team_number=9001)
+        now = datetime.utcnow()
+        user_id = uuid4()
+        user = User(
+            id=user_id,
+            email="climb@example.com",
+            auth_provider="discord",
+            display_name="Climb User",
+            logged_in_user_org=None,
+            created_at=now,
+            updated_at=now,
+        )
+
+        red_teams = [6100, 6101, 6102]
+        blue_teams = [6200, 6201, 6202]
+        team_records = [
+            TeamRecord(team_number=number, team_name=f"Team {number}")
+            for number in red_teams + blue_teams
+        ]
+
+        session.add_all([season, event, organization, user, *team_records])
+        await session.commit()
+        await session.refresh(organization)
+
+        membership = UserOrganization(
+            user_id=user_id,
+            organization_id=organization.id,
+            role=UserRole.MEMBER,
+        )
+        session.add(membership)
+        await session.commit()
+
+        schedule = MatchSchedule(
+            event_key=event.event_key,
+            match_number=1,
+            match_level="qm",
+            red1_id=red_teams[0],
+            red2_id=red_teams[1],
+            red3_id=red_teams[2],
+            blue1_id=blue_teams[0],
+            blue2_id=blue_teams[1],
+            blue3_id=blue_teams[2],
+        )
+        organization_event = OrganizationEvent(
+            organization_id=organization.id,
+            event_key=event.event_key,
+            public_data=True,
+            active=True,
+        )
+
+        session.add_all([schedule, organization_event])
+
+        match_records = []
+        for team_number in red_teams + blue_teams:
+            endgame_value = Endgame2025.DEEP if team_number == red_teams[0] else Endgame2025.NONE
+            match_records.append(
+                MatchData2025(
+                    season=season.id,
+                    team_number=team_number,
+                    event_key=event.event_key,
+                    match_number=1,
+                    match_level="qm",
+                    user_id=user_id,
+                    organization_id=organization.id,
+                    al1c=1,
+                    tl1c=1,
+                    endgame=endgame_value,
+                )
+            )
+
+        session.add_all(match_records)
+        await session.commit()
+
+        original_default_rng = np.random.default_rng
+        monkeypatch.setattr(np.random, "default_rng", lambda: original_default_rng(42))
+
+        results = await simulate_match_prediction(
+            session, event.event_key, "qm", 1
+        )
+
+        org_results = results[int(organization.id)]
+
+        assert org_results["red_endgame_rp"] == pytest.approx(1.0)
+        assert org_results["blue_endgame_rp"] == pytest.approx(0.0)

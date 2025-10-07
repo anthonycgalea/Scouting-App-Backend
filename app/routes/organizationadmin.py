@@ -142,6 +142,8 @@ router = APIRouter(
 from models import (
     Organization,
     OrganizationEvent,
+    OrganizationEventAlliance,
+    OrgEventAllianceInviteStatus,
     FRCEvent,
     MatchSchedule,
     User,
@@ -155,6 +157,7 @@ from services.event import (
     MatchExportType,
     get_active_event_key_for_user,
     get_match_data_for_event_or_404,
+    require_lead_or_admin_membership,
     serialize_match_data_for_export,
 )
 
@@ -198,12 +201,160 @@ class OrganizationMemberChange(SQLModel):
     role: UserRole
 
 
+class OrganizationCollaborationCreateRequest(SQLModel):
+    organizationid: int
+
+
+class OrganizationCollaborationAcceptRequest(SQLModel):
+    organizationEventId: UUID
+
+
+class OrganizationCollaborationResponse(SQLModel):
+    organizationEventId: UUID
+    organizationId: int
+    status: OrgEventAllianceInviteStatus
+
+
 class OrganizationMemberDeleteRequest(SQLModel):
     userId: UUID
 
 
 class OrganizationApplicationDeleteRequest(SQLModel):
     userId: UUID
+
+
+async def _get_active_org_event(
+    session: AsyncSession,
+    membership: UserOrganization,
+) -> OrganizationEvent:
+    statement = select(OrganizationEvent).where(
+        OrganizationEvent.organization_id == membership.organization_id,
+        OrganizationEvent.active == True,  # noqa: E712 - SQLAlchemy boolean comparison
+    )
+    result = await session.exec(statement)
+    org_event = result.scalar_one_or_none()
+
+    if org_event is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No active event configured for this organization",
+        )
+
+    return org_event
+
+
+@router.post(
+    "/collab",
+    response_model=OrganizationCollaborationResponse,
+    status_code=201,
+)
+async def create_organization_collaboration(
+    payload: OrganizationCollaborationCreateRequest,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> OrganizationCollaborationResponse:
+    membership = await require_lead_or_admin_membership(session, user)
+    org_event = await _get_active_org_event(session, membership)
+
+    if payload.organizationid == membership.organization_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot create collaboration with your own organization",
+        )
+
+    other_org = await session.get(Organization, payload.organizationid)
+    if other_org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    existing_stmt = select(OrganizationEventAlliance).where(
+        OrganizationEventAlliance.orgevent_Uid == org_event.id,
+        OrganizationEventAlliance.other_organization_id == payload.organizationid,
+    )
+    existing_alliance = (await session.exec(existing_stmt)).one_or_none()
+    if existing_alliance is not None:
+        raise HTTPException(status_code=409, detail="Collaboration already exists")
+
+    alliance = OrganizationEventAlliance(
+        orgevent_Uid=org_event.id,
+        other_organization_id=payload.organizationid,
+        org_invite_status=OrgEventAllianceInviteStatus.PENDING,
+    )
+    session.add(alliance)
+    await session.commit()
+    await session.refresh(alliance)
+
+    return OrganizationCollaborationResponse(
+        organizationEventId=alliance.orgevent_Uid,
+        organizationId=alliance.other_organization_id,
+        status=alliance.org_invite_status,
+    )
+
+
+@router.get(
+    "/collab",
+    response_model=List[OrganizationCollaborationResponse],
+)
+async def get_organization_collaborations(
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> List[OrganizationCollaborationResponse]:
+    membership = await require_lead_or_admin_membership(session, user)
+    org_event = await _get_active_org_event(session, membership)
+
+    statement = select(OrganizationEventAlliance).where(
+        OrganizationEventAlliance.orgevent_Uid == org_event.id
+    )
+    alliances = (await session.exec(statement)).all()
+
+    return [
+        OrganizationCollaborationResponse(
+            organizationEventId=alliance.orgevent_Uid,
+            organizationId=alliance.other_organization_id,
+            status=alliance.org_invite_status,
+        )
+        for alliance in alliances
+    ]
+
+
+@router.patch(
+    "/collab",
+    response_model=OrganizationCollaborationResponse,
+)
+async def accept_organization_collaboration(
+    payload: OrganizationCollaborationAcceptRequest,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> OrganizationCollaborationResponse:
+    membership = await require_lead_or_admin_membership(session, user)
+
+    statement = select(OrganizationEventAlliance).where(
+        OrganizationEventAlliance.orgevent_Uid == payload.organizationEventId,
+        OrganizationEventAlliance.other_organization_id == membership.organization_id,
+    )
+    alliance = (await session.exec(statement)).one_or_none()
+
+    if alliance is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Collaboration invitation not found",
+        )
+
+    if alliance.org_invite_status != OrgEventAllianceInviteStatus.PENDING:
+        raise HTTPException(
+            status_code=409,
+            detail="Collaboration invitation already responded to",
+        )
+
+    alliance.org_invite_status = OrgEventAllianceInviteStatus.ACCEPTED
+    session.add(alliance)
+    await session.commit()
+    await session.refresh(alliance)
+
+    return OrganizationCollaborationResponse(
+        organizationEventId=alliance.orgevent_Uid,
+        organizationId=alliance.other_organization_id,
+        status=alliance.org_invite_status,
+    )
 
 
 @router.post("/downloadData")

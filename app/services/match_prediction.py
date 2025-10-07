@@ -34,6 +34,7 @@ from services.event import (
     get_active_event_key_for_user,
     get_event_or_404,
     get_match_or_404,
+    get_scouting_alliance_organization_ids,
     update_statbotics_data_for_event,
 )
 from services.scoring import (
@@ -119,14 +120,17 @@ async def _collect_team_records(
     match_model: type[MatchData],
     event_key: str,
     team_number: int,
-    organization_id: int,
+    organization_ids: Sequence[int],
 ) -> List[MatchData]:
+    if not organization_ids:
+        return []
+
     statement = (
         select(match_model)
         .where(
             match_model.event_key == event_key,
             match_model.team_number == team_number,
-            match_model.organization_id == organization_id,
+            match_model.organization_id.in_(list(organization_ids)),
         )
         .order_by(match_model.match_number.desc())
     )
@@ -221,13 +225,13 @@ async def _get_team_statistics(
     match_model: type[MatchData],
     event_key: str,
     team_number: int,
-    organization_id: int,
+    organization_ids: Sequence[int],
     auto_weights: Dict[str, float],
     teleop_weights: Dict[str, float],
     endgame_points: Dict[str, float],
 ) -> Dict[str, Tuple[float, float]]:
     records = await _collect_team_records(
-        session, match_model, event_key, team_number, organization_id
+        session, match_model, event_key, team_number, organization_ids
     )
     if records:
         _apply_calculated_fields(records, auto_weights, teleop_weights, endgame_points)
@@ -407,13 +411,16 @@ async def _fetch_match_records(
     session: AsyncSession,
     model: type[RecordType],
     event_key: str,
-    organization_id: int,
+    organization_ids: Sequence[int],
 ) -> List[RecordType]:
+    if not organization_ids:
+        return []
+
     statement = (
         select(model)
         .where(
             model.event_key == event_key,
-            model.organization_id == organization_id,
+            model.organization_id.in_(list(organization_ids)),
         )
         .order_by(model.match_number.desc())
     )
@@ -440,6 +447,12 @@ async def retrieve_prediction_data(session: AsyncSession, user: Any) -> List[Mat
     match_model = MATCH_DATA_MODELS_BY_YEAR.get(event.year)
     prescout_model = PRESCOUT_MODELS_BY_YEAR.get(event.year)
 
+    alliance_organization_ids = list(
+        await get_scouting_alliance_organization_ids(
+            session, event_key, membership.organization_id
+        )
+    )
+
     seen_matches: Set[Tuple[str, int]] = set()
     ordered_records: List[MatchData] = []
     limit = 10
@@ -456,7 +469,7 @@ async def retrieve_prediction_data(session: AsyncSession, user: Any) -> List[Mat
         )
 
         scouted_records = await _fetch_match_records(
-            session, match_model, event_key, membership.organization_id
+            session, match_model, event_key, alliance_organization_ids
         )
         latest_matches = _collect_latest_matches(
             scouted_records, seen_matches, limit
@@ -478,7 +491,7 @@ async def retrieve_prediction_data(session: AsyncSession, user: Any) -> List[Mat
         )
 
         prescout_records = await _fetch_match_records(
-            session, prescout_model, event_key, membership.organization_id
+            session, prescout_model, event_key, alliance_organization_ids
         )
         latest_prescout = _collect_latest_matches(
             prescout_records, seen_matches, limit
@@ -622,20 +635,32 @@ async def get_match_prediction_for_user_organization(
             detail="Match predictions are not available for this event year",
         )
 
-    prediction = await session.get(
-        prediction_model,
-        (
-            event_key,
-            int(match_number),
-            match_level,
-            int(membership.organization_id),
-        ),
+    alliance_organization_ids = list(
+        await get_scouting_alliance_organization_ids(
+            session, event_key, membership.organization_id
+        )
     )
 
-    if prediction is None:
+    if not alliance_organization_ids:
         raise HTTPException(status_code=404, detail="Match prediction not found")
 
-    return prediction
+    statement = select(prediction_model).where(
+        prediction_model.event_key == event_key,
+        prediction_model.match_number == int(match_number),
+        prediction_model.match_level == match_level,
+        prediction_model.organization_id.in_(alliance_organization_ids),
+    )
+    result = await session.execute(statement)
+    predictions = result.scalars().all()
+
+    if not predictions:
+        raise HTTPException(status_code=404, detail="Match prediction not found")
+
+    for prediction in predictions:
+        if prediction.organization_id == membership.organization_id:
+            return prediction
+
+    return predictions[0]
 
 
 async def simulate_match_prediction(
@@ -679,13 +704,21 @@ async def simulate_match_prediction(
     results: Dict[int, Dict[str, float]] = {}
 
     for organization_id in organization_ids:
+        alliance_organization_ids = list(
+            await get_scouting_alliance_organization_ids(
+                session, event_code, int(organization_id)
+            )
+        )
+        if not alliance_organization_ids:
+            continue
+
         red_stats = [
             await _get_team_statistics(
                 session,
                 match_model,
                 event_code,
                 int(team_number),
-                organization_id,
+                alliance_organization_ids,
                 auto_weights,
                 teleop_weights,
                 endgame_points,
@@ -698,7 +731,7 @@ async def simulate_match_prediction(
                 match_model,
                 event_code,
                 int(team_number),
-                organization_id,
+                alliance_organization_ids,
                 auto_weights,
                 teleop_weights,
                 endgame_points,

@@ -37,6 +37,7 @@ from services.event import (
     MATCH_DATA_MODELS_BY_YEAR,
     get_active_event_key_for_user,
     get_event_or_404,
+    get_scouting_alliance_organization_ids,
 )
 from services.season import get_season_by_year_or_404
 
@@ -803,9 +804,15 @@ async def get_superscout_records(
             detail="Superscouting is not available for this event",
         )
 
+    alliance_organization_ids = list(
+        await get_scouting_alliance_organization_ids(
+            session, event_key, membership.organization_id
+        )
+    )
+
     statement = select(superscout_model).where(
         superscout_model.event_key == event_key,
-        superscout_model.organization_id == membership.organization_id,
+        superscout_model.organization_id.in_(alliance_organization_ids),
     )
 
     if team_number is not None:
@@ -842,9 +849,15 @@ async def get_superscouted_match_alliances(
     if not match_schedules:
         return []
 
+    alliance_organization_ids = list(
+        await get_scouting_alliance_organization_ids(
+            session, event_key, membership.organization_id
+        )
+    )
+
     superscout_statement = select(superscout_model).where(
         superscout_model.event_key == event_key,
-        superscout_model.organization_id == membership.organization_id,
+        superscout_model.organization_id.in_(alliance_organization_ids),
     )
     superscout_result = await session.execute(superscout_statement)
     superscout_records = superscout_result.scalars().all()

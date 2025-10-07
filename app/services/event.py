@@ -2,7 +2,7 @@ import os
 from enum import Enum
 from datetime import datetime
 from math import sqrt
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from uuid import UUID
 
 import httpx
@@ -22,6 +22,8 @@ from models import (
     FRCEvent,
     Organization,
     OrganizationEvent,
+    OrganizationEventAlliance,
+    OrgEventAllianceInviteStatus,
     UserOrganization,
     UserRole,
     EventRankings,
@@ -34,6 +36,62 @@ from services.scoring import (
     resolve_weight_mapping,
 )
 from services.season import get_season_by_year_or_404
+
+
+async def get_scouting_alliance_organization_ids(
+    session: AsyncSession, event_key: str, organization_id: int | None
+) -> Set[int]:
+    """Return organization identifiers accessible through scouting alliances.
+
+    The result always includes ``organization_id`` when provided and adds any
+    organizations that have accepted scouting alliances for the specified
+    ``event_key``. Alliances are considered in both directions so that an
+    organization gains access when it invited another organization or accepted
+    an invitation from someone else.
+    """
+
+    if organization_id is None:
+        return set()
+
+    accessible_ids: Set[int] = {int(organization_id)}
+
+    org_event_statement = select(OrganizationEvent.id).where(
+        OrganizationEvent.event_key == event_key,
+        OrganizationEvent.organization_id == organization_id,
+    )
+    org_event_result = await session.execute(org_event_statement)
+    org_event_id = org_event_result.scalar_one_or_none()
+
+    if org_event_id is not None:
+        outgoing_statement = select(OrganizationEventAlliance.other_organization_id).where(
+            OrganizationEventAlliance.orgevent_Uid == org_event_id,
+            OrganizationEventAlliance.org_invite_status
+            == OrgEventAllianceInviteStatus.ACCEPTED,
+        )
+        outgoing_result = await session.execute(outgoing_statement)
+        accessible_ids.update(
+            org_id for org_id in outgoing_result.scalars().all() if org_id is not None
+        )
+
+    incoming_statement = (
+        select(OrganizationEvent.organization_id)
+        .join(
+            OrganizationEventAlliance,
+            OrganizationEventAlliance.orgevent_Uid == OrganizationEvent.id,
+        )
+        .where(
+            OrganizationEvent.event_key == event_key,
+            OrganizationEventAlliance.other_organization_id == organization_id,
+            OrganizationEventAlliance.org_invite_status
+            == OrgEventAllianceInviteStatus.ACCEPTED,
+        )
+    )
+    incoming_result = await session.execute(incoming_statement)
+    accessible_ids.update(
+        org_id for org_id in incoming_result.scalars().all() if org_id is not None
+    )
+
+    return accessible_ids
 
 class MatchScheduleResponse(SQLModel):
     event_key: str

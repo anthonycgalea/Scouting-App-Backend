@@ -134,6 +134,54 @@ async def _collect_team_records(
     return list(result.scalars().all())
 
 
+def _sum_record_fields(record: MatchData, fields: Sequence[str]) -> float:
+    total = 0.0
+    for field in fields:
+        value = getattr(record, field, 0)
+        if value is None:
+            continue
+        try:
+            total += float(value)
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def _compute_weighted_metric(
+    records: Sequence[MatchData], extractor: Any
+) -> Tuple[float, float]:
+    limited_records = list(records[: len(WEIGHT_SCHEDULE)])
+    weights = list(WEIGHT_SCHEDULE[: len(limited_records)])
+
+    weighted_values: List[Tuple[float, float]] = []
+    for record, weight in zip(limited_records, weights):
+        try:
+            value = extractor(record)
+        except Exception:  # pragma: no cover - defensive programming
+            value = None
+        if value is None:
+            continue
+        try:
+            weighted_values.append((float(value), float(weight)))
+        except (TypeError, ValueError):
+            continue
+
+    if not weighted_values:
+        return 0.0, 0.0
+
+    total_weight = sum(weight for _, weight in weighted_values)
+    if total_weight == 0:
+        return 0.0, 0.0
+
+    weighted_sum = sum(value * weight for value, weight in weighted_values)
+    mean = weighted_sum / total_weight
+
+    variance = sum(weight * (value - mean) ** 2 for value, weight in weighted_values)
+    variance /= total_weight
+
+    return mean, sqrt(variance)
+
+
 def _compute_weighted_statistics(
     records: Sequence[MatchData],
     statbotics_value: float | None,
@@ -177,7 +225,7 @@ async def _get_team_statistics(
     auto_weights: Dict[str, float],
     teleop_weights: Dict[str, float],
     endgame_points: Dict[str, float],
-) -> Tuple[float, float]:
+) -> Dict[str, Tuple[float, float]]:
     records = await _collect_team_records(
         session, match_model, event_key, team_number, organization_id
     )
@@ -189,7 +237,43 @@ async def _get_team_statistics(
     if statbotics_record is not None:
         statbotics_total = float(statbotics_record.total_points)
 
-    return _compute_weighted_statistics(records, statbotics_total)
+    total_mean, total_std = _compute_weighted_statistics(records, statbotics_total)
+
+    auto_coral_mean, auto_coral_std = _compute_weighted_metric(
+        records, lambda record: _sum_record_fields(record, ("al4c", "al3c", "al2c", "al1c"))
+    )
+    total_coral_mean, total_coral_std = _compute_weighted_metric(
+        records,
+        lambda record: _sum_record_fields(
+            record,
+            (
+                "al4c",
+                "al3c",
+                "al2c",
+                "al1c",
+                "tl4c",
+                "tl3c",
+                "tl2c",
+                "tl1c",
+            ),
+        ),
+    )
+
+    processor_mean, processor_std = _compute_weighted_metric(
+        records, lambda record: _sum_record_fields(record, ("aProcessor", "tProcessor"))
+    )
+    endgame_mean, endgame_std = _compute_weighted_metric(
+        records, lambda record: getattr(record, "endgame_points", 0.0)
+    )
+
+    return {
+        "total": (total_mean, total_std),
+        "auto_coral": (auto_coral_mean, auto_coral_std),
+        "total_coral": (total_coral_mean, total_coral_std),
+        "processor": (processor_mean, processor_std),
+        "endgame": (endgame_mean, endgame_std),
+    }
+
 def _apply_calculated_fields(
     records: Sequence[MatchData],
     auto_weights: Dict[str, float],
@@ -523,22 +607,81 @@ async def simulate_match_prediction(
             for team_number in blue_teams
         ]
 
-        red_mean = sum(mu for mu, _ in red_stats)
-        red_var = sum(sigma ** 2 for _, sigma in red_stats)
-        blue_mean = sum(mu for mu, _ in blue_stats)
-        blue_var = sum(sigma ** 2 for _, sigma in blue_stats)
+        def _generate_alliance_samples(
+            team_statistics: Sequence[Dict[str, Tuple[float, float]]],
+            metric: str,
+            clamp_non_negative: bool = True,
+        ) -> np.ndarray:
+            samples = np.zeros(n_samples)
+            for stats in team_statistics:
+                mean, std_dev = stats.get(metric, (0.0, 0.0))
+                if std_dev <= 0:
+                    team_samples = np.full(n_samples, mean, dtype=float)
+                else:
+                    team_samples = rng.normal(mean, std_dev, size=n_samples)
+                if clamp_non_negative:
+                    team_samples = np.clip(team_samples, 0.0, None)
+                samples += team_samples
+            return samples
 
-        diff_mean = red_mean - blue_mean
-        diff_var = max(red_var + blue_var, 0.0)
-        diff_std = sqrt(diff_var)
+        red_total_samples = _generate_alliance_samples(red_stats, "total")
+        blue_total_samples = _generate_alliance_samples(blue_stats, "total")
 
-        if diff_std == 0:
-            samples = np.full(n_samples, diff_mean)
-        else:
-            samples = rng.normal(diff_mean, diff_std, size=n_samples)
-
-        red_win_pct = float(np.mean(samples > 0))
+        red_win_pct = float(np.mean(red_total_samples > blue_total_samples))
         blue_win_pct = 1.0 - red_win_pct
+
+        red_auto_coral_samples = _generate_alliance_samples(red_stats, "auto_coral")
+        blue_auto_coral_samples = _generate_alliance_samples(blue_stats, "auto_coral")
+
+        red_endgame_samples = _generate_alliance_samples(red_stats, "endgame")
+        blue_endgame_samples = _generate_alliance_samples(blue_stats, "endgame")
+
+        red_total_coral_samples = _generate_alliance_samples(red_stats, "total_coral")
+        blue_total_coral_samples = _generate_alliance_samples(blue_stats, "total_coral")
+
+        red_processor_samples = _generate_alliance_samples(red_stats, "processor")
+        blue_processor_samples = _generate_alliance_samples(blue_stats, "processor")
+
+        red_auto_rp = float(np.mean(red_auto_coral_samples >= 1.0))
+        blue_auto_rp = float(np.mean(blue_auto_coral_samples >= 1.0))
+
+        red_endgame_rp = float(np.mean(red_endgame_samples >= 12.0))
+        blue_endgame_rp = float(np.mean(blue_endgame_samples >= 12.0))
+
+        red_w_coral_rp = float(np.mean(red_total_coral_samples >= 27.0))
+        blue_w_coral_rp = float(np.mean(blue_total_coral_samples >= 27.0))
+
+        red_r_coral_rp = float(
+            np.mean(
+                np.logical_or(
+                    np.logical_and(
+                        red_total_coral_samples >= 15.0, red_processor_samples >= 2.0
+                    ),
+                    red_total_coral_samples >= 20.0,
+                )
+            )
+        )
+        blue_r_coral_rp = float(
+            np.mean(
+                np.logical_or(
+                    np.logical_and(
+                        blue_total_coral_samples >= 15.0, blue_processor_samples >= 2.0
+                    ),
+                    blue_total_coral_samples >= 20.0,
+                )
+            )
+        )
+
+        rp_predictions = {
+            "red_auto_rp": red_auto_rp,
+            "blue_auto_rp": blue_auto_rp,
+            "red_endgame_rp": red_endgame_rp,
+            "blue_endgame_rp": blue_endgame_rp,
+            "red_w_coral_rp": red_w_coral_rp,
+            "blue_w_coral_rp": blue_w_coral_rp,
+            "red_r_coral_rp": red_r_coral_rp,
+            "blue_r_coral_rp": blue_r_coral_rp,
+        }
 
         existing_prediction = await session.get(
             prediction_model,
@@ -566,8 +709,9 @@ async def simulate_match_prediction(
             prediction_record.timestamp = now
 
         for field in RP_PREDICTION_FIELDS:
+            value = rp_predictions.get(field, 0.5)
             if hasattr(prediction_record, field):
-                setattr(prediction_record, field, 0.5)
+                setattr(prediction_record, field, float(value))
 
         if hasattr(prediction_record, "updated_at"):
             setattr(prediction_record, "updated_at", now)
@@ -577,6 +721,7 @@ async def simulate_match_prediction(
         results[int(organization_id)] = {
             "red_alliance_win_pct": red_win_pct,
             "blue_alliance_win_pct": blue_win_pct,
+            **rp_predictions,
         }
 
     await session.commit()

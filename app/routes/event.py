@@ -12,6 +12,10 @@ router = APIRouter(
 )
 
 from services.event import *
+from services.match_prediction import (
+    get_match_prediction_for_user_organization,
+    simulate_match_prediction,
+)
 
 @router.get("/match/{matchLevel}/{matchNumber}", tags=["Scout"])
 async def get_single_match(
@@ -32,6 +36,30 @@ async def get_match_preview_endpoint(
     user=Depends(get_current_user),
 ) -> MatchPreviewResponse:
     return await get_match_preview(session, user, matchNumber, matchLevel)
+
+
+@router.get("/match/{matchLevel}/{matchNumber}/simulation", tags=["Scout"])
+async def get_match_simulation(
+    matchNumber: int,
+    matchLevel: str,
+    session: AsyncSession = Depends(get_session),
+    user=Depends(get_current_user),
+):
+    prediction = await get_match_prediction_for_user_organization(
+        session, user, matchLevel, matchNumber
+    )
+    return prediction
+
+
+@router.post("/match/{matchLevel}/{matchNumber}/simulation", tags=["Scout"])
+async def run_match_simulation(
+    matchNumber: int,
+    matchLevel: str,
+    session: AsyncSession = Depends(get_session),
+    user=Depends(get_current_user),
+):
+    event_code = await get_active_event_key_for_user(session, user)
+    return await simulate_match_prediction(session, event_code, matchLevel, matchNumber)
 
 
 @router.get("/matches")

@@ -25,6 +25,7 @@ from models import (
     UserOrganization,
     UserRole,
     EventRankings,
+    StatboticsData,
 )
 from services.season import get_season_by_year_or_404
 
@@ -61,6 +62,7 @@ TBA_MATCH_DATA_MODELS_BY_YEAR: Dict[int, type[TBAMatchData]] = {
 
 TBA_API_ENDPOINT = os.getenv("TBA_API_ENDPOINT", "https://www.thebluealliance.com/api/v3")
 TBA_API_KEY = os.getenv("TBA_API_KEY")
+STATBOTICS_API_ENDPOINT = os.getenv("STATBOTICS_API_ENDPOINT", "https://api.statbotics.io/v3")
 
 class TeamRecordResponse(SQLModel):
     team_number: int
@@ -987,3 +989,57 @@ async def update_event_rankings_from_tba(
     _normalize_sort_order_info(payload)
 
     return payload
+
+
+async def update_statbotics_data_for_event(
+    session: AsyncSession,
+    eventCode: str,
+) -> List[StatboticsData]:
+    await get_event_or_404(session, eventCode)
+
+    url = f"{STATBOTICS_API_ENDPOINT}/team_events?event={eventCode}"
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(url)
+
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to retrieve Statbotics data",
+        )
+
+    payload = response.json()
+    if not isinstance(payload, list):
+        raise HTTPException(status_code=502, detail="Invalid Statbotics payload")
+
+    await session.execute(
+        delete(StatboticsData).where(StatboticsData.event_key == eventCode)
+    )
+
+    records: List[StatboticsData] = []
+
+    for entry in payload:
+        team_number = entry.get("team")
+        if team_number is None:
+            continue
+
+        epa = entry.get("epa") or {}
+        breakdown = epa.get("breakdown")
+        if not isinstance(breakdown, dict):
+            breakdown = {}
+
+        statbotics_record = StatboticsData(
+            event_key=eventCode,
+            team_number=int(team_number),
+            total_points=_coerce_float(breakdown.get("total_points")),
+            auto_points=_coerce_float(breakdown.get("auto_points")),
+            teleop_points=_coerce_float(breakdown.get("teleop_points")),
+            endgame_points=_coerce_float(breakdown.get("endgame_points")),
+        )
+
+        session.add(statbotics_record)
+        records.append(statbotics_record)
+
+    await session.commit()
+
+    return records

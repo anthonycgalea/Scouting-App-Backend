@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 from math import sqrt
 from numbers import Number
 from typing import Any, DefaultDict, Dict, List, Sequence, Set, Tuple, TypeVar
 
+import numpy as np
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from models import (
     MatchData,
+    MatchPredictions2025,
     Organization,
+    OrganizationEvent,
     Prescout2025,
+    Season,
     StatboticsData,
     UserOrganization,
 )
@@ -28,6 +33,7 @@ from services.event import (
     MATCH_MODEL_TELEOP_WEIGHTS_ATTR,
     get_active_event_key_for_user,
     get_event_or_404,
+    get_match_or_404,
     update_statbotics_data_for_event,
 )
 from services.scoring import (
@@ -55,6 +61,135 @@ MATCH_DATA_FIELDS_TO_EXCLUDE = {
     "timestamp",
     "notes",
 }
+
+MATCH_PREDICTION_MODELS_BY_YEAR = {
+    2025: MatchPredictions2025,
+}
+
+RP_PREDICTION_FIELDS: Tuple[str, ...] = (
+    "red_auto_rp",
+    "blue_auto_rp",
+    "red_endgame_rp",
+    "blue_endgame_rp",
+    "red_w_coral_rp",
+    "blue_w_coral_rp",
+    "red_r_coral_rp",
+    "blue_r_coral_rp",
+    "red_rw_win_pct",
+    "blue_rw_win_pct",
+    "red_wr_win_pct",
+    "blue_wr_win_pct",
+    "red_rr_win_pct",
+    "blue_rr_win_pct",
+)
+
+
+async def _get_season_for_year(session: AsyncSession, year: int) -> Season:
+    statement = select(Season).where(Season.year == year)
+    result = await session.execute(statement)
+    season = result.scalar_one_or_none()
+    if season is None:
+        raise HTTPException(status_code=404, detail="Season not found for event year")
+    return season
+
+
+async def _get_organization_ids_for_event(
+    session: AsyncSession, match_model: type[MatchData], event_key: str
+) -> List[int]:
+    statement = (
+        select(match_model.organization_id)
+        .where(match_model.event_key == event_key)
+        .distinct()
+    )
+    result = await session.execute(statement)
+    organization_ids = [org_id for org_id in result.scalars().all() if org_id is not None]
+
+    if organization_ids:
+        return organization_ids
+
+    org_event_stmt = select(OrganizationEvent.organization_id).where(
+        OrganizationEvent.event_key == event_key
+    )
+    org_event_result = await session.execute(org_event_stmt)
+    return list({org_id for org_id in org_event_result.scalars().all() if org_id is not None})
+
+
+async def _collect_team_records(
+    session: AsyncSession,
+    match_model: type[MatchData],
+    event_key: str,
+    team_number: int,
+    organization_id: int,
+) -> List[MatchData]:
+    statement = (
+        select(match_model)
+        .where(
+            match_model.event_key == event_key,
+            match_model.team_number == team_number,
+            match_model.organization_id == organization_id,
+        )
+        .order_by(match_model.match_number.desc())
+    )
+    result = await session.execute(statement)
+    return list(result.scalars().all())
+
+
+def _compute_weighted_statistics(
+    records: Sequence[MatchData],
+    statbotics_value: float | None,
+) -> Tuple[float, float]:
+    limited_records = list(records[: len(WEIGHT_SCHEDULE)])
+    weights = list(WEIGHT_SCHEDULE[: len(limited_records)])
+
+    weighted_values: List[Tuple[float, float]] = []
+    for record, weight in zip(limited_records, weights):
+        total_points = getattr(record, "total_points", None)
+        if total_points is None:
+            continue
+        weighted_values.append((float(total_points), float(weight)))
+
+    if statbotics_value is not None and len(weighted_values) < len(WEIGHT_SCHEDULE):
+        for weight in WEIGHT_SCHEDULE[len(weighted_values) :]:
+            weighted_values.append((float(statbotics_value), float(weight)))
+
+    if not weighted_values:
+        return 0.0, 0.0
+
+    total_weight = sum(weight for _, weight in weighted_values)
+    if total_weight == 0:
+        return 0.0, 0.0
+
+    weighted_sum = sum(value * weight for value, weight in weighted_values)
+    mean = weighted_sum / total_weight
+
+    variance = sum(weight * (value - mean) ** 2 for value, weight in weighted_values)
+    variance /= total_weight
+
+    return mean, sqrt(variance)
+
+
+async def _get_team_statistics(
+    session: AsyncSession,
+    match_model: type[MatchData],
+    event_key: str,
+    team_number: int,
+    organization_id: int,
+    auto_weights: Dict[str, float],
+    teleop_weights: Dict[str, float],
+    endgame_points: Dict[str, float],
+) -> Tuple[float, float]:
+    records = await _collect_team_records(
+        session, match_model, event_key, team_number, organization_id
+    )
+    if records:
+        _apply_calculated_fields(records, auto_weights, teleop_weights, endgame_points)
+
+    statbotics_record = await session.get(StatboticsData, (event_key, int(team_number)))
+    statbotics_total = None
+    if statbotics_record is not None:
+        statbotics_total = float(statbotics_record.total_points)
+
+    return _compute_weighted_statistics(records, statbotics_total)
 def _apply_calculated_fields(
     records: Sequence[MatchData],
     auto_weights: Dict[str, float],
@@ -318,3 +453,132 @@ async def calculate_weighted_match_statistics(
         }
 
     return {"sample_size": len(matches), "statistics": statistics}
+
+
+async def simulate_match_prediction(
+    session: AsyncSession,
+    event_code: str,
+    match_level: str,
+    match_number: int,
+) -> Dict[int, Dict[str, float]]:
+    """Run Monte Carlo simulations for a scheduled match and persist results."""
+
+    event = await get_event_or_404(session, event_code)
+
+    match_model = MATCH_DATA_MODELS_BY_YEAR.get(event.year)
+    prediction_model = MATCH_PREDICTION_MODELS_BY_YEAR.get(event.year)
+    if match_model is None or prediction_model is None:
+        raise HTTPException(status_code=404, detail="Match predictions are not available for this event year")
+
+    match_schedule = await get_match_or_404(session, event_code, match_number, match_level)
+    season = await _get_season_for_year(session, event.year)
+
+    auto_weights = resolve_weight_mapping(
+        match_model, MATCH_MODEL_AUTO_WEIGHTS_ATTR, DEFAULT_AUTO_WEIGHTS
+    )
+    teleop_weights = resolve_weight_mapping(
+        match_model, MATCH_MODEL_TELEOP_WEIGHTS_ATTR, DEFAULT_TELEOP_WEIGHTS
+    )
+    endgame_points = resolve_endgame_points_mapping(
+        match_model, MATCH_MODEL_ENDGAME_POINTS_ATTR, DEFAULT_ENDGAME_POINTS
+    )
+
+    red_teams = [match_schedule.red1_id, match_schedule.red2_id, match_schedule.red3_id]
+    blue_teams = [match_schedule.blue1_id, match_schedule.blue2_id, match_schedule.blue3_id]
+
+    organization_ids = await _get_organization_ids_for_event(session, match_model, event_code)
+    if not organization_ids:
+        raise HTTPException(status_code=404, detail="No organizations found for match predictions")
+
+    rng = np.random.default_rng()
+    n_samples = 10_000
+    now = datetime.now()
+    results: Dict[int, Dict[str, float]] = {}
+
+    for organization_id in organization_ids:
+        red_stats = [
+            await _get_team_statistics(
+                session,
+                match_model,
+                event_code,
+                int(team_number),
+                organization_id,
+                auto_weights,
+                teleop_weights,
+                endgame_points,
+            )
+            for team_number in red_teams
+        ]
+        blue_stats = [
+            await _get_team_statistics(
+                session,
+                match_model,
+                event_code,
+                int(team_number),
+                organization_id,
+                auto_weights,
+                teleop_weights,
+                endgame_points,
+            )
+            for team_number in blue_teams
+        ]
+
+        red_mean = sum(mu for mu, _ in red_stats)
+        red_var = sum(sigma ** 2 for _, sigma in red_stats)
+        blue_mean = sum(mu for mu, _ in blue_stats)
+        blue_var = sum(sigma ** 2 for _, sigma in blue_stats)
+
+        diff_mean = red_mean - blue_mean
+        diff_var = max(red_var + blue_var, 0.0)
+        diff_std = sqrt(diff_var)
+
+        if diff_std == 0:
+            samples = np.full(n_samples, diff_mean)
+        else:
+            samples = rng.normal(diff_mean, diff_std, size=n_samples)
+
+        red_win_pct = float(np.mean(samples > 0))
+        blue_win_pct = 1.0 - red_win_pct
+
+        existing_prediction = await session.get(
+            prediction_model,
+            (event_code, int(match_number), match_level, int(organization_id)),
+        )
+
+        if existing_prediction is None:
+            prediction_record = prediction_model(
+                season=season.id,
+                event_key=event_code,
+                match_number=int(match_number),
+                match_level=match_level,
+                organization_id=int(organization_id),
+                red_alliance_win_pct=red_win_pct,
+                blue_alliance_win_pct=blue_win_pct,
+                n_samples=n_samples,
+            )
+            prediction_record.timestamp = now
+        else:
+            prediction_record = existing_prediction
+            prediction_record.season = season.id
+            prediction_record.red_alliance_win_pct = red_win_pct
+            prediction_record.blue_alliance_win_pct = blue_win_pct
+            prediction_record.n_samples = n_samples
+            prediction_record.timestamp = now
+
+        for field in RP_PREDICTION_FIELDS:
+            if hasattr(prediction_record, field):
+                setattr(prediction_record, field, 0.5)
+
+        if hasattr(prediction_record, "updated_at"):
+            setattr(prediction_record, "updated_at", now)
+
+        session.add(prediction_record)
+
+        results[int(organization_id)] = {
+            "red_alliance_win_pct": red_win_pct,
+            "blue_alliance_win_pct": blue_win_pct,
+        }
+
+    await session.commit()
+
+    return results

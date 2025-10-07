@@ -29,4 +29,4 @@ from .picklist_generator_2025 import PickListGenerator2025
 from .pit_scout import PitScout
 from .pit_scout_2025 import PitScout2025
 from .statbotics_data import StatboticsData
-from .other_organization_event_access import OrganizationEventCollaboration, OrgEventInviteStatus
+from .other_organization_event_access import OrganizationEventAlliance, OrgEventAllianceInviteStatus

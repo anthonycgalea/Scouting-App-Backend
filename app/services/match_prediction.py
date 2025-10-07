@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Sequence, Set, Tuple, TypeVar
+from collections import defaultdict
+from math import sqrt
+from numbers import Number
+from typing import Any, DefaultDict, Dict, List, Sequence, Set, Tuple, TypeVar
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -23,6 +26,19 @@ RecordType = TypeVar("RecordType", bound=MatchData)
 
 PRESCOUT_MODELS_BY_YEAR = {
     2025: Prescout2025,
+}
+
+WEIGHT_SCHEDULE = [3, 3, 3, 3, 3, 2, 2, 2, 1, 1]
+MATCH_DATA_FIELDS_TO_EXCLUDE = {
+    "season",
+    "team_number",
+    "event_key",
+    "match_number",
+    "match_level",
+    "user_id",
+    "organization_id",
+    "timestamp",
+    "notes",
 }
 
 
@@ -132,3 +148,56 @@ async def retrieve_prediction_data(session: AsyncSession, user: Any) -> List[Mat
         )
 
     return ordered_records
+
+
+async def calculate_weighted_match_statistics(
+    session: AsyncSession, user: Any
+) -> Dict[str, Any]:
+    """Return weighted averages and standard deviations for recent match data.
+
+    The calculation uses :func:`retrieve_prediction_data` to gather up to the ten
+    most recent matches and applies the following weight schedule based on
+    recency: the five most recent matches are weighted ``3``, matches six
+    through eight are weighted ``2`` and matches nine and ten are weighted ``1``.
+    """
+
+    matches = await retrieve_prediction_data(session, user)
+
+    if not matches:
+        return {"sample_size": 0, "statistics": {}}
+
+    weighted_values: DefaultDict[str, List[Tuple[float, float]]] = defaultdict(list)
+
+    weights = list(WEIGHT_SCHEDULE[: len(matches)])
+    if len(weights) < len(matches):
+        weights.extend([WEIGHT_SCHEDULE[-1]] * (len(matches) - len(weights)))
+
+    for match, weight in zip(matches, weights):
+
+        match_data = match.model_dump()
+        for field, value in match_data.items():
+            if field in MATCH_DATA_FIELDS_TO_EXCLUDE:
+                continue
+
+            if isinstance(value, Number):
+                weighted_values[field].append((float(value), float(weight)))
+
+    statistics: Dict[str, Dict[str, float]] = {}
+
+    for field, values in weighted_values.items():
+        total_weight = sum(weight for _, weight in values)
+        if total_weight == 0:
+            continue
+
+        weighted_sum = sum(value * weight for value, weight in values)
+        mean = weighted_sum / total_weight
+
+        variance = sum(weight * (value - mean) ** 2 for value, weight in values)
+        variance /= total_weight
+
+        statistics[field] = {
+            "weighted_average": mean,
+            "weighted_standard_deviation": sqrt(variance),
+        }
+
+    return {"sample_size": len(matches), "statistics": statistics}

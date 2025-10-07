@@ -16,7 +16,10 @@ from app.models import (
     UserOrganization,
     UserRole,
 )
-from app.services.match_prediction import calculate_weighted_match_statistics
+from app.services.match_prediction import (
+    calculate_weighted_match_statistics,
+    retrieve_prediction_data,
+)
 from tests.conftest import AsyncSessionLocal
 
 
@@ -109,22 +112,32 @@ async def test_weighted_statistics_include_calculated_point_fields(setup_databas
         assert "autonomous_points" in statistics
         assert "teleop_points" in statistics
         assert "endgame_points" in statistics
+        assert "total_points" in statistics
 
         auto_average = statistics["autonomous_points"]["weighted_average"]
         teleop_average = statistics["teleop_points"]["weighted_average"]
         endgame_average = statistics["endgame_points"]["weighted_average"]
+        total_average = statistics["total_points"]["weighted_average"]
 
         assert auto_average == pytest.approx(12.5)
         assert teleop_average == pytest.approx(8.5)
         assert endgame_average == pytest.approx(4.0)
+        assert total_average == pytest.approx(25.0)
 
         auto_std = statistics["autonomous_points"]["weighted_standard_deviation"]
         teleop_std = statistics["teleop_points"]["weighted_standard_deviation"]
         endgame_std = statistics["endgame_points"]["weighted_standard_deviation"]
+        total_std = statistics["total_points"]["weighted_standard_deviation"]
 
         assert auto_std == pytest.approx(1.5)
         assert teleop_std == pytest.approx(1.5)
         assert endgame_std == pytest.approx(2.0)
+        assert total_std == pytest.approx(2.0)
+
+        recent_matches = await retrieve_prediction_data(session, user_payload)
+        assert len(recent_matches) == 2
+        totals = sorted(match.total_points for match in recent_matches)
+        assert totals == [23.0, 27.0]
 
 
 @pytest.mark.asyncio
@@ -209,10 +222,12 @@ async def test_statbotics_data_supplements_weighted_statistics(setup_database):
         auto_average = statistics["autonomous_points"]["weighted_average"]
         teleop_average = statistics["teleop_points"]["weighted_average"]
         endgame_average = statistics["endgame_points"]["weighted_average"]
+        total_average = statistics["total_points"]["weighted_average"]
 
         assert auto_average == pytest.approx(221 / 23)
         assert teleop_average == pytest.approx(175 / 23)
         assert endgame_average == pytest.approx(126 / 23)
+        assert total_average == pytest.approx(642 / 23)
 
 
 @pytest.mark.asyncio
@@ -310,7 +325,9 @@ async def test_missing_statbotics_data_triggers_update(monkeypatch, setup_databa
         auto_average = statistics["autonomous_points"]["weighted_average"]
         teleop_average = statistics["teleop_points"]["weighted_average"]
         endgame_average = statistics["endgame_points"]["weighted_average"]
+        total_average = statistics["total_points"]["weighted_average"]
 
         assert auto_average == pytest.approx(300 / 23)
         assert teleop_average == pytest.approx(360 / 23)
         assert endgame_average == pytest.approx(240 / 23)
+        assert total_average == pytest.approx(800 / 23)

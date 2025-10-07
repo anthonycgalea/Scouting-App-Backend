@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 
 from app.models import (
+    DataValidation,
     FRCEvent,
     MatchData2025,
     MatchPredictions2025,
@@ -21,6 +22,8 @@ from app.models import (
 )
 from app.services.match_prediction import get_match_prediction_for_user_organization
 from app.services.scout import (
+    DataValidationFilterRequest,
+    get_data_validations_for_active_event,
     get_superscout_records,
     get_superscouted_match_alliances,
 )
@@ -28,7 +31,9 @@ from app.services.team import get_match_data_for_team_at_active_event
 from tests.conftest import AsyncSessionLocal
 
 
-async def _create_alliance_context(event_key: str, season_id: int) -> dict:
+async def _create_alliance_context(
+    event_key: str, season_id: int, *, alliance_from_primary: bool = True
+) -> dict:
     async with AsyncSessionLocal() as session:
         now = datetime.utcnow()
 
@@ -103,8 +108,12 @@ async def _create_alliance_context(event_key: str, season_id: int) -> dict:
         await session.refresh(primary_event)
 
         alliance = OrganizationEventAlliance(
-            orgevent_Uid=primary_event.id,
-            other_organization_id=allied_org.id,
+            orgevent_Uid=(
+                primary_event.id if alliance_from_primary else allied_event.id
+            ),
+            other_organization_id=(
+                allied_org.id if alliance_from_primary else primary_org.id
+            ),
             org_invite_status=OrgEventAllianceInviteStatus.ACCEPTED,
         )
         session.add(alliance)
@@ -213,6 +222,93 @@ async def test_superscout_access_includes_allied_data(setup_database):
         alliance_info = alliances[0]["alliances"]
         assert alliance_info["red"] is True
         assert alliance_info["blue"] is False
+
+
+@pytest.mark.asyncio
+async def test_data_validation_pull_includes_allied_records(setup_database):
+    context = await _create_alliance_context("2025alliancedv", 9100)
+
+    async with AsyncSessionLocal() as session:
+        team = TeamRecord(teamNumber=6100, teamName="Alliance DV Team")
+        session.add(team)
+        await session.commit()
+
+        match_entry = MatchData2025(
+            season=context["season_id"],
+            team_number=team.team_number,
+            event_key=context["event_key"],
+            match_number=3,
+            match_level="qm",
+            user_id=context["allied_user_id"],
+            organization_id=context["allied_organization_id"],
+        )
+        validation_record = DataValidation(
+            event_key=context["event_key"],
+            match_number=3,
+            match_level="qm",
+            user_id=context["allied_user_id"],
+            team_number=team.team_number,
+            organization_id=context["allied_organization_id"],
+        )
+
+        session.add_all([match_entry, validation_record])
+        await session.commit()
+
+        user_payload = {
+            "id": str(context["primary_user_id"]),
+            "user_org": context["primary_membership_id"],
+        }
+
+        filters = DataValidationFilterRequest(teamNumber=team.team_number)
+        records = await get_data_validations_for_active_event(
+            session, user_payload, filters
+        )
+
+        assert len(records) == 1
+        assert records[0].organization_id == context["allied_organization_id"]
+
+
+@pytest.mark.asyncio
+async def test_data_validation_pull_includes_incoming_allied_records(setup_database):
+    context = await _create_alliance_context(
+        "2025alliancedvincoming", 9101, alliance_from_primary=False
+    )
+
+    async with AsyncSessionLocal() as session:
+        team = TeamRecord(teamNumber=6200, teamName="Incoming DV Team")
+        session.add(team)
+        await session.commit()
+
+        match_entry = MatchData2025(
+            season=context["season_id"],
+            team_number=team.team_number,
+            event_key=context["event_key"],
+            match_number=4,
+            match_level="qm",
+            user_id=context["allied_user_id"],
+            organization_id=context["allied_organization_id"],
+        )
+        validation_record = DataValidation(
+            event_key=context["event_key"],
+            match_number=4,
+            match_level="qm",
+            user_id=context["allied_user_id"],
+            team_number=team.team_number,
+            organization_id=context["allied_organization_id"],
+        )
+
+        session.add_all([match_entry, validation_record])
+        await session.commit()
+
+        user_payload = {
+            "id": str(context["primary_user_id"]),
+            "user_org": context["primary_membership_id"],
+        }
+
+        records = await get_data_validations_for_active_event(session, user_payload)
+
+        assert len(records) == 1
+        assert records[0].organization_id == context["allied_organization_id"]
 
 
 @pytest.mark.asyncio

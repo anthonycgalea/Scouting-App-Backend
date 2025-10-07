@@ -568,9 +568,14 @@ async def get_data_validations_for_active_event(
     if membership is None:
         raise HTTPException(status_code=404, detail="Organization membership not found")
 
+    alliance_organization_ids = await get_scouting_alliance_organization_ids(
+        session, event_key, membership.organization_id
+    )
+    alliance_organization_ids_tuple = tuple(alliance_organization_ids)
+
     statement = select(DataValidation).where(
         DataValidation.event_key == event_key,
-        DataValidation.organization_id == membership.organization_id,
+        DataValidation.organization_id.in_(alliance_organization_ids_tuple),
     )
 
     event = None
@@ -621,12 +626,17 @@ async def batch_update_data_validations(
     if membership is None:
         raise HTTPException(status_code=404, detail="Organization membership not found")
 
+    alliance_organization_ids = await get_scouting_alliance_organization_ids(
+        session, event_key, membership.organization_id
+    )
+    alliance_organization_ids_tuple = tuple(alliance_organization_ids)
+
     updated_records: List[DataValidation] = []
 
     for update in updates:
         statement = select(DataValidation).where(
             DataValidation.event_key == event_key,
-            DataValidation.organization_id == membership.organization_id,
+            DataValidation.organization_id.in_(alliance_organization_ids_tuple),
             DataValidation.match_number == update.matchNumber,
             DataValidation.match_level == update.matchLevel,
             DataValidation.team_number == update.teamNumber,
@@ -1236,6 +1246,11 @@ async def update_tba_match_data_for_pending_alliances(
 
     organization_id = membership.organization_id
 
+    alliance_organization_ids = await get_scouting_alliance_organization_ids(
+        session, event_key, organization_id
+    )
+    alliance_organization_ids_tuple = tuple(alliance_organization_ids)
+
     match_model = MATCH_DATA_MODELS_BY_YEAR.get(event.year)
 
     tba_model = TBA_MATCH_DATA_MODELS_BY_YEAR.get(event.year)
@@ -1255,7 +1270,7 @@ async def update_tba_match_data_for_pending_alliances(
 
     pending_statement = select(DataValidation).where(
         DataValidation.event_key == event_key,
-        DataValidation.organization_id == organization_id,
+        DataValidation.organization_id.in_(alliance_organization_ids_tuple),
         DataValidation.validation_status == ValidationStatus.PENDING,
     )
     pending_result = await session.execute(pending_statement)

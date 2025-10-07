@@ -7,6 +7,7 @@ from services.event import (
     MATCH_DATA_MODELS_BY_YEAR,
     get_active_event_key_for_user,
     get_event_or_404,
+    get_scouting_alliance_organization_ids,
 )
 
 
@@ -36,10 +37,16 @@ async def get_match_data_for_team_at_active_event(
     if match_model is None:
         raise HTTPException(status_code=404, detail="Match data is not available for this event")
 
+    alliance_organization_ids = list(
+        await get_scouting_alliance_organization_ids(
+            session, event_key, membership.organization_id
+        )
+    )
+
     statement = select(match_model).where(
         match_model.team_number == team_number,
         match_model.event_key == event_key,
-        match_model.organization_id == membership.organization_id,
+        match_model.organization_id.in_(alliance_organization_ids),
     )
     result = await session.execute(statement)
     return result.scalars().all()

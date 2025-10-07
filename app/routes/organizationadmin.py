@@ -179,6 +179,7 @@ class OrganizationEventDetail(SQLModel):
     eventKey: str
     shortName: str
     eventName: str
+    eventYear: int
     week: int
     isPublic: bool
     isActive: bool
@@ -939,6 +940,7 @@ async def get_organization_events(
             isPublic=organization_event.public_data,
             isActive=organization_event.active,
             eventName=frc_event.event_name,
+            eventYear=frc_event.year,
             shortName=frc_event.short_name,
             eventKey=frc_event.event_key,
             week=frc_event.week,

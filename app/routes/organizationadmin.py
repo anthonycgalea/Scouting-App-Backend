@@ -226,6 +226,7 @@ class OrganizationCollaborationResponse(SQLModel):
     status: OrgEventAllianceInviteStatus
     organizationName: str
     teamNumber: Optional[int]
+    eventKey: str
     eventName: str
     eventWeek: int
     eventYear: int
@@ -307,16 +308,13 @@ async def create_organization_collaboration(
     if event is None:
         raise HTTPException(status_code=404, detail="Inviting event not found")
 
-    inviting_org = await session.get(Organization, membership.organization_id)
-    if inviting_org is None:
-        raise HTTPException(status_code=404, detail="Inviting organization not found")
-
     return OrganizationCollaborationResponse(
         organizationEventId=alliance.orgevent_Uid,
         organizationId=alliance.other_organization_id,
         status=alliance.org_invite_status,
-        organizationName=inviting_org.name,
-        teamNumber=inviting_org.team_number,
+        organizationName=other_org.name,
+        teamNumber=other_org.team_number,
+        eventKey=event.event_key,
         eventName=event.event_name,
         eventWeek=event.week,
         eventYear=event.year,
@@ -343,23 +341,38 @@ async def get_organization_collaborations(
     if event is None:
         raise HTTPException(status_code=404, detail="Inviting event not found")
 
-    inviting_org = await session.get(Organization, membership.organization_id)
-    if inviting_org is None:
-        raise HTTPException(status_code=404, detail="Inviting organization not found")
+    other_org_ids = {alliance.other_organization_id for alliance in alliances}
+    other_orgs: Dict[int, Organization] = {}
 
-    return [
-        OrganizationCollaborationResponse(
-            organizationEventId=alliance.orgevent_Uid,
-            organizationId=alliance.other_organization_id,
-            status=alliance.org_invite_status,
-            organizationName=inviting_org.name,
-            teamNumber=inviting_org.team_number,
-            eventName=event.event_name,
-            eventWeek=event.week,
-            eventYear=event.year,
+    if other_org_ids:
+        org_statement = select(Organization).where(Organization.id.in_(other_org_ids))
+        fetched_orgs = (await session.exec(org_statement)).all()
+        other_orgs = {org.id: org for org in fetched_orgs}
+
+    responses: List[OrganizationCollaborationResponse] = []
+
+    for alliance in alliances:
+        other_org = other_orgs.get(alliance.other_organization_id)
+        if other_org is None:
+            raise HTTPException(
+                status_code=404, detail="Invited organization not found"
+            )
+
+        responses.append(
+            OrganizationCollaborationResponse(
+                organizationEventId=alliance.orgevent_Uid,
+                organizationId=alliance.other_organization_id,
+                status=alliance.org_invite_status,
+                organizationName=other_org.name,
+                teamNumber=other_org.team_number,
+                eventKey=event.event_key,
+                eventName=event.event_name,
+                eventWeek=event.week,
+                eventYear=event.year,
+            )
         )
-        for alliance in alliances
-    ]
+
+    return responses
 
 
 @router.get(
@@ -400,6 +413,7 @@ async def get_requested_organization_collaborations(
                 status=alliance.org_invite_status,
                 organizationName=inviting_org.name,
                 teamNumber=inviting_org.team_number,
+                eventKey=event.event_key,
                 eventName=event.event_name,
                 eventWeek=event.week,
                 eventYear=event.year,
@@ -488,10 +502,11 @@ async def accept_organization_collaboration(
 
     response = OrganizationCollaborationResponse(
         organizationEventId=alliance.orgevent_Uid,
-        organizationId=alliance.other_organization_id,
+        organizationId=inviting_org.id,
         status=OrgEventAllianceInviteStatus.ACCEPTED,
         organizationName=inviting_org.name,
         teamNumber=inviting_org.team_number,
+        eventKey=event.event_key,
         eventName=event.event_name,
         eventWeek=event.week,
         eventYear=event.year,
@@ -545,10 +560,11 @@ async def decline_organization_collaboration(
 
     response = OrganizationCollaborationResponse(
         organizationEventId=alliance.orgevent_Uid,
-        organizationId=alliance.other_organization_id,
+        organizationId=inviting_org.id,
         status=alliance.org_invite_status,
         organizationName=inviting_org.name,
         teamNumber=inviting_org.team_number,
+        eventKey=event.event_key,
         eventName=event.event_name,
         eventWeek=event.week,
         eventYear=event.year,

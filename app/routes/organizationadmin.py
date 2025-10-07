@@ -486,19 +486,20 @@ async def accept_organization_collaboration(
 
     session.add(reverse_alliance)
 
-    await session.commit()
-    await session.refresh(alliance)
-
-    return OrganizationCollaborationResponse(
+    response = OrganizationCollaborationResponse(
         organizationEventId=alliance.orgevent_Uid,
         organizationId=alliance.other_organization_id,
-        status=alliance.org_invite_status,
+        status=OrgEventAllianceInviteStatus.ACCEPTED,
         organizationName=inviting_org.name,
         teamNumber=inviting_org.team_number,
         eventName=event.event_name,
         eventWeek=event.week,
         eventYear=event.year,
     )
+
+    await session.commit()
+
+    return response
 
 
 @router.delete(

@@ -1,3 +1,5 @@
+from typing import List
+
 from fastapi import HTTPException
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -18,6 +20,27 @@ async def get_team_or_404(session: AsyncSession, team_number: int) -> TeamRecord
     if team is None:
         raise HTTPException(status_code=404, detail="Team not found")
     return team
+
+
+async def get_team_records_page(
+    session: AsyncSession,
+    page: int,
+    page_size: int = 500,
+) -> List[TeamRecord]:
+    if page < 1:
+        raise HTTPException(status_code=400, detail="Page must be greater than 0")
+
+    statement = (
+        select(TeamRecord)
+        .order_by(TeamRecord.team_number)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    result = await session.execute(statement)
+    teams = result.scalars().all()
+    if not teams and page != 1:
+        raise HTTPException(status_code=404, detail="No teams found for this page")
+    return teams
 
 
 async def get_match_data_for_team_at_active_event(

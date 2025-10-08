@@ -17,7 +17,8 @@ from routes import (
 app = FastAPI(title="Scouting App API")
 
 origins = [
-    "http://localhost:5173"
+    "http://localhost:5173",
+    "http://localhost:8081",
 ]
 
 app.add_middleware(

@@ -136,7 +136,7 @@ def resolve_match_data_2025_headers(
 
 router = APIRouter(
     prefix="/organization",
-    tags=["Organization"]    
+    tags=["Organization"]
 )
 
 from models import (
@@ -198,6 +198,49 @@ class OrganizationApplication(SQLModel):
     email: str
     role: UserRole
     joined: datetime
+
+
+async def _get_or_create_organization_event(
+    session: AsyncSession, organization_id: int, event_key: str
+) -> OrganizationEvent:
+    statement = select(OrganizationEvent).where(
+        OrganizationEvent.organization_id == organization_id,
+        OrganizationEvent.event_key == event_key,
+    )
+    organization_event = (await session.exec(statement)).one_or_none()
+
+    if organization_event is not None:
+        return organization_event
+
+    organization_event = OrganizationEvent(
+        organization_id=organization_id,
+        event_key=event_key,
+    )
+    session.add(organization_event)
+    await session.flush()
+    return organization_event
+
+
+async def _ensure_accepted_alliance(
+    session: AsyncSession, event_id: UUID, other_organization_id: int
+) -> OrganizationEventAlliance:
+    statement = select(OrganizationEventAlliance).where(
+        OrganizationEventAlliance.orgevent_Uid == event_id,
+        OrganizationEventAlliance.other_organization_id == other_organization_id,
+    )
+    alliance = (await session.exec(statement)).one_or_none()
+
+    if alliance is None:
+        alliance = OrganizationEventAlliance(
+            orgevent_Uid=event_id,
+            other_organization_id=other_organization_id,
+            org_invite_status=OrgEventAllianceInviteStatus.ACCEPTED,
+        )
+    else:
+        alliance.org_invite_status = OrgEventAllianceInviteStatus.ACCEPTED
+
+    session.add(alliance)
+    return alliance
 
 
 class OrganizationMember(SQLModel):
@@ -499,6 +542,61 @@ async def accept_organization_collaboration(
         reverse_alliance.org_invite_status = OrgEventAllianceInviteStatus.ACCEPTED
 
     session.add(reverse_alliance)
+    await session.flush()
+
+    async def _get_allied_organization_ids(
+        organization_event: OrganizationEvent,
+    ) -> List[int]:
+        allied_result = await session.exec(
+            select(OrganizationEventAlliance).where(
+                OrganizationEventAlliance.orgevent_Uid == organization_event.id,
+                OrganizationEventAlliance.org_invite_status
+                == OrgEventAllianceInviteStatus.ACCEPTED,
+            )
+        )
+        allied_alliances = allied_result.all()
+        return [alliance.other_organization_id for alliance in allied_alliances]
+
+    event_cache: Dict[int, OrganizationEvent] = {
+        inviting_event.organization_id: inviting_event,
+        accepting_org_event.organization_id: accepting_org_event,
+    }
+
+    async def _get_event_for_organization(organization_id: int) -> OrganizationEvent:
+        cached = event_cache.get(organization_id)
+        if cached is not None:
+            return cached
+        organization_event = await _get_or_create_organization_event(
+            session, organization_id, event.event_key
+        )
+        event_cache[organization_id] = organization_event
+        return organization_event
+
+    inviting_allied_org_ids = set(await _get_allied_organization_ids(inviting_event))
+    inviting_allied_org_ids.discard(membership.organization_id)
+    inviting_allied_org_ids.discard(inviting_event.organization_id)
+
+    for allied_org_id in inviting_allied_org_ids:
+        allied_event = await _get_event_for_organization(allied_org_id)
+        await _ensure_accepted_alliance(
+            session, accepting_org_event.id, allied_org_id
+        )
+        await _ensure_accepted_alliance(
+            session, allied_event.id, accepting_org_event.organization_id
+        )
+
+    accepting_allied_org_ids = set(
+        await _get_allied_organization_ids(accepting_org_event)
+    )
+    accepting_allied_org_ids.discard(inviting_event.organization_id)
+    accepting_allied_org_ids.discard(accepting_org_event.organization_id)
+
+    for allied_org_id in accepting_allied_org_ids:
+        allied_event = await _get_event_for_organization(allied_org_id)
+        await _ensure_accepted_alliance(session, inviting_event.id, allied_org_id)
+        await _ensure_accepted_alliance(
+            session, allied_event.id, inviting_event.organization_id
+        )
 
     response = OrganizationCollaborationResponse(
         organizationEventId=alliance.orgevent_Uid,

@@ -259,6 +259,19 @@ async def get_match_schedule_or_404(session: AsyncSession, eventCode: str) -> Li
     return matches
 
 
+async def get_event_teams_or_404(session: AsyncSession, eventCode: str) -> List[TeamEvent]:
+    statement = (
+        select(TeamEvent)
+        .where(TeamEvent.event_key == eventCode)
+        .order_by(TeamEvent.team_number)
+    )
+    result = await session.execute(statement)
+    teams = result.scalars().all()
+    if not teams:
+        raise HTTPException(status_code=404, detail="No teams found for this event")
+    return teams
+
+
 async def get_match_data_for_event_or_404(
     session: AsyncSession,
     eventCode: str,

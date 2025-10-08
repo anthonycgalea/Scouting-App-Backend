@@ -6,6 +6,7 @@ from routes import (
     event,
     organizationadmin,
     picklist,
+    public,
     scout,
     season,
     team,
@@ -36,6 +37,7 @@ app.include_router(picklist.router)
 app.include_router(scout.router)
 app.include_router(team.router)
 app.include_router(season.router)
+app.include_router(public.router)
 
 @app.get("/ping")
 def ping():

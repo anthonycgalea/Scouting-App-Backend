@@ -17,6 +17,7 @@ from ..event import (
     MATCH_DATA_MODELS_BY_YEAR,
     get_active_event_key_for_user,
     get_event_or_404,
+    get_scouting_alliance_organization_ids,
 )
 
 
@@ -706,9 +707,16 @@ async def _load_event_dataframe(
             detail="Team summaries are not configured for this event year",
         )
 
+    alliance_organization_ids = await get_scouting_alliance_organization_ids(
+        session, event_key, membership.organization_id
+    )
+
+    if not alliance_organization_ids:
+        return pd.DataFrame(), scoring_config
+
     statement = select(match_model).where(
         match_model.event_key == event_key,
-        match_model.organization_id == membership.organization_id,
+        match_model.organization_id.in_(tuple(alliance_organization_ids)),
     )
     result = await session.execute(statement)
     records = result.scalars().all()

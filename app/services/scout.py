@@ -1,7 +1,21 @@
 import os
 from collections import defaultdict
 from enum import Enum as PyEnum
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Callable, Sequence, Set, TypeVar, Union, cast
+from typing import (
+    Any,
+    Callable,
+    Collection,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    TypeVar,
+    Union,
+    cast,
+)
 
 import httpx
 from fastapi import HTTPException
@@ -762,9 +776,16 @@ async def get_already_scouted_matches(
     if match_model is None:
         raise HTTPException(status_code=404, detail="Match data is not available for this event")
 
+    alliance_organization_ids = await get_scouting_alliance_organization_ids(
+        session, event_key, membership.organization_id
+    )
+
+    if not alliance_organization_ids:
+        return []
+
     statement = select(match_model).where(
         match_model.event_key == event_key,
-        match_model.organization_id == membership.organization_id,
+        match_model.organization_id.in_(tuple(alliance_organization_ids)),
     )
 
     if filters:
@@ -799,9 +820,16 @@ async def get_prescout_records(
             detail="Prescouting is not available for this event",
         )
 
+    alliance_organization_ids = await get_scouting_alliance_organization_ids(
+        session, event_key, membership.organization_id
+    )
+
+    if not alliance_organization_ids:
+        return []
+
     statement = select(prescout_model).where(
         prescout_model.event_key == event_key,
-        prescout_model.organization_id == membership.organization_id,
+        prescout_model.organization_id.in_(tuple(alliance_organization_ids)),
     )
 
     if team_number is not None:
@@ -1022,9 +1050,16 @@ async def get_pit_scout_records(
 
     pit_model = _get_pit_model_for_event(event.year)
 
+    alliance_organization_ids = await get_scouting_alliance_organization_ids(
+        session, event_key, membership.organization_id
+    )
+
+    if not alliance_organization_ids:
+        return []
+
     statement = select(pit_model).where(
         pit_model.event_key == event_key,
-        pit_model.organization_id == membership.organization_id,
+        pit_model.organization_id.in_(tuple(alliance_organization_ids)),
     )
 
     if team_number is not None:
@@ -1038,6 +1073,9 @@ async def _prepare_pit_payload(
     session: AsyncSession,
     user_payload: Dict[str, Any],
     payload: Dict[str, Any],
+    *,
+    allowed_organization_ids: Optional[Collection[int]] = None,
+    assign_default_organization_id: bool = True,
 ) -> tuple[type[PitScout], Season, UUID, UserOrganization, str]:
     event_key = await get_active_event_key_for_user(session, user_payload)
 
@@ -1062,6 +1100,13 @@ async def _prepare_pit_payload(
     payload["user_id"] = user_id
 
     organization_id = membership.organization_id
+    allowed_ids: Set[int]
+    if allowed_organization_ids is not None:
+        allowed_ids = {int(org_id) for org_id in allowed_organization_ids}
+        allowed_ids.add(int(organization_id))
+    else:
+        allowed_ids = {int(organization_id)}
+
     incoming_org_id = payload.get("organization_id")
     if incoming_org_id is not None:
         try:
@@ -1069,13 +1114,16 @@ async def _prepare_pit_payload(
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail="Invalid organization identifier for pit scouting data") from exc
 
-        if incoming_org_id_int != organization_id:
+        if incoming_org_id_int not in allowed_ids:
             raise HTTPException(
                 status_code=403,
                 detail="Pit scouting data does not belong to the active organization",
             )
 
-    payload["organization_id"] = organization_id
+        organization_id = incoming_org_id_int
+
+    if assign_default_organization_id:
+        payload["organization_id"] = organization_id
 
     if "team_number" in payload and payload.get("team_number") is not None:
         try:
@@ -1154,9 +1202,24 @@ async def update_pit_scout_record(
     payload = _coerce_payload(pit)
     user_payload = _normalize_user_payload(user)
 
-    pit_model, _season, user_id, membership, event_key = await _prepare_pit_payload(
-        session, user_payload, payload
+    event_key = await get_active_event_key_for_user(session, user_payload)
+    membership = await _get_user_membership_or_404(session, user_payload)
+
+    alliance_organization_ids = await get_scouting_alliance_organization_ids(
+        session, event_key, membership.organization_id
     )
+
+    pit_model, _season, user_id, _membership, prepared_event_key = await _prepare_pit_payload(
+        session,
+        user_payload,
+        payload,
+        allowed_organization_ids=alliance_organization_ids,
+        assign_default_organization_id=False,
+    )
+
+    # ``_prepare_pit_payload`` guarantees the event key aligns with the user's
+    # active event. Reuse the normalized value for downstream queries.
+    event_key = prepared_event_key
 
     team_number = payload.get("team_number")
     if team_number is None:
@@ -1165,7 +1228,7 @@ async def update_pit_scout_record(
     statement = select(pit_model).where(
         pit_model.event_key == event_key,
         pit_model.team_number == team_number,
-        pit_model.organization_id == membership.organization_id,
+        pit_model.organization_id.in_(tuple(alliance_organization_ids)),
     )
 
     result = await session.execute(statement)
@@ -1174,13 +1237,11 @@ async def update_pit_scout_record(
     if stored_record is None:
         raise HTTPException(status_code=404, detail="Pit scouting record not found for this team")
 
-    if stored_record.organization_id != membership.organization_id:
-        raise HTTPException(status_code=403, detail="Pit scouting record does not belong to this organization")
-
     stored_payload = _model_dump(stored_record)
     merged_payload = {**stored_payload, **payload}
     merged_payload["user_id"] = stored_record.user_id
-    merged_payload["organization_id"] = membership.organization_id
+    merged_payload.pop("organization_id", None)
+    merged_payload["organization_id"] = stored_record.organization_id
     merged_payload["notes"] = merged_payload.get("notes") or ""
 
     try:

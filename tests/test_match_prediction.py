@@ -11,6 +11,8 @@ from app.models import (
     MatchSchedule,
     Organization,
     OrganizationEvent,
+    OrganizationEventAlliance,
+    OrgEventAllianceInviteStatus,
     Season,
     StatboticsData,
     TeamRecord,
@@ -231,6 +233,105 @@ async def test_statbotics_data_supplements_weighted_statistics(setup_database):
         assert teleop_average == pytest.approx(175 / 23)
         assert endgame_average == pytest.approx(126 / 23)
         assert total_average == pytest.approx(642 / 23)
+
+
+@pytest.mark.asyncio
+async def test_retrieve_prediction_data_prefers_logged_in_org(setup_database):
+    async with AsyncSessionLocal() as session:
+        season = Season(id=210, year=2025, name="REEFSCAPE Alliance Preference")
+        event = FRCEvent(
+            event_key="2025alliancepref",
+            event_name="Alliance Preference Event",
+            short_name="AlliancePref",
+            year=2025,
+            week=1,
+        )
+
+        primary_org = Organization(name="Primary Org", team_number=5555)
+        secondary_org = Organization(name="Secondary Org", team_number=6666)
+        now = datetime.utcnow()
+        user_id = uuid4()
+        user = User(
+            id=user_id,
+            email="primary@example.com",
+            auth_provider="discord",
+            display_name="Primary User",
+            logged_in_user_org=None,
+            created_at=now,
+            updated_at=now,
+        )
+
+        session.add_all([season, event, primary_org, secondary_org, user])
+        await session.commit()
+        await session.refresh(primary_org)
+        await session.refresh(secondary_org)
+
+        membership = UserOrganization(
+            user_id=user_id,
+            organization_id=primary_org.id,
+            role=UserRole.MEMBER,
+        )
+        session.add(membership)
+        await session.commit()
+        await session.refresh(membership)
+
+        primary_event = OrganizationEvent(
+            organization_id=primary_org.id,
+            event_key=event.event_key,
+            public_data=True,
+            active=True,
+        )
+        secondary_event = OrganizationEvent(
+            organization_id=secondary_org.id,
+            event_key=event.event_key,
+            public_data=True,
+            active=True,
+        )
+        session.add_all([primary_event, secondary_event])
+        await session.commit()
+        await session.refresh(primary_event)
+
+        alliance = OrganizationEventAlliance(
+            orgevent_Uid=primary_event.id,
+            other_organization_id=secondary_org.id,
+            org_invite_status=OrgEventAllianceInviteStatus.ACCEPTED,
+        )
+        session.add(alliance)
+
+        session.add_all(
+            [
+                MatchData2025(
+                    season=season.id,
+                    team_number=1111,
+                    event_key=event.event_key,
+                    match_number=1,
+                    match_level="qm",
+                    user_id=user_id,
+                    organization_id=secondary_org.id,
+                    tl1c=5,
+                ),
+                MatchData2025(
+                    season=season.id,
+                    team_number=1111,
+                    event_key=event.event_key,
+                    match_number=1,
+                    match_level="qm",
+                    user_id=user_id,
+                    organization_id=primary_org.id,
+                    al1c=2,
+                ),
+            ]
+        )
+
+        await session.commit()
+
+        user_payload = {"id": str(user_id), "user_org": membership.id}
+
+        matches = await retrieve_prediction_data(session, user_payload)
+
+        assert len(matches) == 1
+        match = matches[0]
+        assert match.organization_id == primary_org.id
 
 
 @pytest.mark.asyncio

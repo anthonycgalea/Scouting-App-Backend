@@ -387,14 +387,30 @@ def _collect_latest_matches(
     records: Sequence[RecordType],
     seen_matches: Set[Tuple[str, int]],
     limit: int,
+    preferred_organization_id: int | None = None,
 ) -> List[RecordType]:
     collected: List[RecordType] = []
     unique_matches = len(seen_matches)
+    collected_index: Dict[Tuple[str, int], int] = {}
 
     for record in records:
         match_identifier = (record.match_level, record.match_number)
         if match_identifier in seen_matches:
-            collected.append(record)
+            if preferred_organization_id is None:
+                continue
+
+            existing_index = collected_index.get(match_identifier)
+            if existing_index is None:
+                continue
+
+            preferred_existing = (
+                getattr(collected[existing_index], "organization_id", None)
+                == preferred_organization_id
+            )
+            is_preferred = getattr(record, "organization_id", None) == preferred_organization_id
+
+            if is_preferred and not preferred_existing:
+                collected[existing_index] = record
             continue
 
         if unique_matches >= limit:
@@ -402,6 +418,7 @@ def _collect_latest_matches(
 
         seen_matches.add(match_identifier)
         unique_matches += 1
+        collected_index[match_identifier] = len(collected)
         collected.append(record)
 
     return collected
@@ -472,7 +489,10 @@ async def retrieve_prediction_data(session: AsyncSession, user: Any) -> List[Mat
             session, match_model, event_key, alliance_organization_ids
         )
         latest_matches = _collect_latest_matches(
-            scouted_records, seen_matches, limit
+            scouted_records,
+            seen_matches,
+            limit,
+            preferred_organization_id=membership.organization_id,
         )
         _apply_calculated_fields(
             latest_matches, auto_weights, teleop_weights, endgame_points
@@ -494,7 +514,10 @@ async def retrieve_prediction_data(session: AsyncSession, user: Any) -> List[Mat
             session, prescout_model, event_key, alliance_organization_ids
         )
         latest_prescout = _collect_latest_matches(
-            prescout_records, seen_matches, limit
+            prescout_records,
+            seen_matches,
+            limit,
+            preferred_organization_id=membership.organization_id,
         )
         _apply_calculated_fields(
             latest_prescout,

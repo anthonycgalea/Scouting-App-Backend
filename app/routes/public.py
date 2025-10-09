@@ -1,10 +1,11 @@
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from db.database import get_session
 from models import Season, TeamEvent, TeamRecord
+from pydantic import BaseModel
 from services.event import (
     EventResponse,
     MatchScheduleResponse,
@@ -14,6 +15,22 @@ from services.event import (
 )
 from services.season import get_seasons
 from services.team import get_team_records_page
+
+
+class PaginationMeta(BaseModel):
+    page: int
+    currentPage: int
+    pageSize: int
+    totalItems: int
+    totalPages: int
+    lastPage: int
+    hasNext: bool
+    nextPage: Optional[int] = None
+
+
+class PaginatedTeamRecordsResponse(BaseModel):
+    data: List[TeamRecord]
+    meta: PaginationMeta
 
 router = APIRouter(prefix="/public", tags=["Public"])
 
@@ -34,12 +51,13 @@ async def get_public_match_schedule(
     return await get_match_schedule_or_404(session, eventCode)
 
 
-@router.get("/teams", response_model=List[TeamRecord])
+@router.get("/teams", response_model=PaginatedTeamRecordsResponse)
 async def get_public_teams(
     page: int = Query(1, ge=1),
     session: AsyncSession = Depends(get_session),
-) -> List[TeamRecord]:
-    return await get_team_records_page(session, page)
+) -> PaginatedTeamRecordsResponse:
+    teams, meta = await get_team_records_page(session, page)
+    return PaginatedTeamRecordsResponse(data=teams, meta=meta)
 
 
 @router.get("/seasons", response_model=List[Season])

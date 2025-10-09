@@ -1,6 +1,8 @@
-from typing import List
+from math import ceil
+from typing import Dict, List, Tuple
 
 from fastapi import HTTPException
+from sqlalchemy import func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -26,9 +28,19 @@ async def get_team_records_page(
     session: AsyncSession,
     page: int,
     page_size: int = 500,
-) -> List[TeamRecord]:
+) -> Tuple[List[TeamRecord], Dict[str, int | bool | None]]:
     if page < 1:
         raise HTTPException(status_code=400, detail="Page must be greater than 0")
+
+    total_result = await session.execute(
+        select(func.count()).select_from(TeamRecord)
+    )
+    total_records = total_result.scalar_one()
+
+    total_pages = ceil(total_records / page_size) if total_records else 0
+
+    if total_pages and page > total_pages:
+        raise HTTPException(status_code=404, detail="No teams found for this page")
 
     statement = (
         select(TeamRecord)
@@ -40,7 +52,21 @@ async def get_team_records_page(
     teams = result.scalars().all()
     if not teams and page != 1:
         raise HTTPException(status_code=404, detail="No teams found for this page")
-    return teams
+
+    has_next = total_pages != 0 and page < total_pages
+
+    meta: Dict[str, int | bool | None] = {
+        "page": page,
+        "currentPage": page,
+        "pageSize": page_size,
+        "totalItems": total_records,
+        "totalPages": total_pages,
+        "lastPage": total_pages,
+        "hasNext": has_next,
+        "nextPage": page + 1 if has_next else None,
+    }
+
+    return teams, meta
 
 
 async def get_match_data_for_team_at_active_event(

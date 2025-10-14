@@ -10,6 +10,7 @@ from auth.dependencies import get_current_user
 from db.database import get_session
 from models import Organization, UserOrganization, User
 from models.user_organization import UserRole
+from services.event import get_active_event_key_for_user
 
 router = APIRouter()
 
@@ -173,6 +174,15 @@ async def get_my_role(
     return {
         "role": membership.role.value
     }
+
+
+@router.get("/user/event")
+async def get_user_event(
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    event_code = await get_active_event_key_for_user(session, user)
+    return {"eventCode": event_code}
 
 @router.get("/user/organization")
 async def get_current_organization(

@@ -1,17 +1,31 @@
 {
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "name": "Python Debugger: FastAPI",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "uvicorn",
-            "args": [
-                "--app-dir", "app",
-                "main:app",
-                "--reload"
-            ],
-            "jinja": true
-        }
-    ]
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python Debugger: FastAPI (Localhost)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "--app-dir", "app",
+        "main:app",
+        "--reload"
+      ],
+      "jinja": true
+    },
+    {
+      "name": "Python Debugger: FastAPI (LAN for Expo)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "--app-dir", "app",
+        "main:app",
+        "--reload",
+        "--host", "0.0.0.0",   // 👈 exposes the server to your LAN
+        "--port", "8000"        // 👈 you can change this if needed
+      ],
+      "jinja": true
+    }
+  ]
 }

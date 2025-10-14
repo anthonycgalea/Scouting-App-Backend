@@ -111,6 +111,16 @@ TBA_BREAKDOWN_PARSERS_BY_YEAR: Dict[
     int, Callable[[Optional[Dict[str, Any]], Sequence[int]], Dict[str, Any]]
 ] = {}
 
+_MATCH_SUBMISSION_PAYLOAD_ALIASES: Dict[str, str] = {
+    "eventKey": "event_key",
+    "matchNumber": "match_number",
+    "matchLevel": "match_level",
+    "teamNumber": "team_number",
+    "seasonId": "season",
+    "organizationId": "organization_id",
+    "userId": "user_id",
+}
+
 
 class MatchAlreadyExistsError(Exception):
     def __init__(self, existing_match: MatchData) -> None:
@@ -154,6 +164,20 @@ def _coerce_payload(data: Union[SQLModel, Dict[str, Any]]) -> Dict[str, Any]:
         return dict(data)
 
     return _model_dump(data)
+
+
+def _apply_payload_aliases(
+    payload: Dict[str, Any], aliases: Dict[str, str]
+) -> Dict[str, Any]:
+    normalized = dict(payload)
+
+    for alias, target in aliases.items():
+        if alias not in normalized or target in normalized:
+            continue
+
+        normalized[target] = normalized.pop(alias)
+
+    return normalized
 
 
 def _normalize_user_payload(user: Any) -> Dict[str, Any]:
@@ -1611,6 +1635,7 @@ async def submit_scouted_match(
     user: User,
 ) -> MatchData:
     payload = _coerce_payload(match)
+    payload = _apply_payload_aliases(payload, _MATCH_SUBMISSION_PAYLOAD_ALIASES)
     user_payload = _normalize_user_payload(user)
 
     event_key = await get_active_event_key_for_user(session, user_payload)

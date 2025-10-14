@@ -1018,6 +1018,73 @@ async def _get_user_membership_or_404(
     return membership
 
 
+def _prepare_match_submission_payload(
+    payload: Dict[str, Any],
+    *,
+    event_key: str,
+    season: Season,
+    membership: UserOrganization,
+    user_id: UUID,
+) -> Dict[str, Any]:
+    prepared_payload = dict(payload)
+
+    incoming_event_key = prepared_payload.get("event_key")
+    if incoming_event_key is not None and incoming_event_key != event_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Match data event does not match the active event for this user",
+        )
+    prepared_payload["event_key"] = event_key
+
+    incoming_season = prepared_payload.get("season")
+    if incoming_season is not None:
+        try:
+            incoming_season_id = int(incoming_season)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid season provided for match data",
+            ) from exc
+
+        if incoming_season_id != season.id:
+            raise HTTPException(
+                status_code=400,
+                detail="Match data season does not match the active event year",
+            )
+    prepared_payload["season"] = season.id
+
+    if membership.user_id != user_id:
+        raise HTTPException(status_code=403, detail="User does not belong to this organization")
+
+    incoming_user_id = _coerce_optional_uuid(prepared_payload.get("user_id"))
+    if incoming_user_id is not None and incoming_user_id != user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Match data user does not match the authenticated user",
+        )
+    prepared_payload["user_id"] = user_id
+
+    organization_id = membership.organization_id
+    incoming_org_id = prepared_payload.get("organization_id")
+    if incoming_org_id is not None:
+        try:
+            incoming_org_id_int = int(incoming_org_id)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid organization identifier for match data",
+            ) from exc
+
+        if incoming_org_id_int != organization_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Match data does not belong to the active organization",
+            )
+    prepared_payload["organization_id"] = organization_id
+
+    return prepared_payload
+
+
 def _coerce_optional_uuid(value: Any) -> Optional[UUID]:
     if value is None or isinstance(value, UUID):
         return value
@@ -1497,9 +1564,13 @@ async def update_tba_match_data_for_pending_alliances(
     }
 
 
-async def batch_submit_match(session: AsyncSession, matches: List[MatchData], user: User):
+async def batch_submit_match(
+    session: AsyncSession,
+    matches: Sequence[Union[MatchData, Dict[str, Any]]],
+    user: User,
+) -> None:
     for match in matches:
-        submit_scouted_match(session, match, user)
+        await submit_scouted_match(session, match, user)
 
 async def batch_update_match(session: AsyncSession, matches: List[MatchData], user: User):
     for match in matches:
@@ -1522,18 +1593,47 @@ async def update_scouted_match(session: AsyncSession, match: MatchData, user: Us
     session.add(stored_match)
 
 
-async def submit_scouted_match(session: AsyncSession, match: MatchData, user: User) -> MatchData:
-    #check if user is part of organization specified in match.organization_id
+async def submit_scouted_match(
+    session: AsyncSession,
+    match: Union[MatchData, Dict[str, Any]],
+    user: User,
+) -> MatchData:
+    payload = _coerce_payload(match)
+    user_payload = _normalize_user_payload(user)
 
-    #if user is guest, verify event code
+    event_key = await get_active_event_key_for_user(session, user_payload)
+    event = await get_event_or_404(session, event_key)
 
-    #if valid, go to switch for match submission
-    if (match.season == 1): #2025 REEFSCAPE
-        return await submit_2025_match(session, MatchData2025(match), user)
-    elif (match.season == 2): #2026 REBUILT
-        return await submit_2026_match(session, MatchData2026(match), user)
+    match_model = MATCH_DATA_MODELS_BY_YEAR.get(event.year)
+    if match_model is None:
+        raise HTTPException(status_code=404, detail="Match data is not available for this event")
 
-    raise HTTPException(status_code=400, detail="Unsupported season for match submission")
+    season = await get_season_by_year_or_404(session, event.year)
+    membership = await _get_user_membership_or_404(session, user_payload)
+    user_id = await _normalize_user_id(user_payload)
+
+    prepared_payload = _prepare_match_submission_payload(
+        payload,
+        event_key=event_key,
+        season=season,
+        membership=membership,
+        user_id=user_id,
+    )
+    prepared_payload["notes"] = prepared_payload.get("notes") or ""
+    prepared_payload.pop("timestamp", None)
+
+    try:
+        typed_match = cast(MatchData, _model_validate(match_model, prepared_payload))
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="Invalid match data for this season") from exc
+
+    return await _submit_match_for_year(
+        session,
+        typed_match,
+        user,
+        expected_year=event.year,
+        match_model=match_model,
+    )
 
 
 async def submit_prescout_record(

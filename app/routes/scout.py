@@ -305,7 +305,7 @@ async def get_scouted_matches(
 
 @router.post("/submit/batch")
 async def submit_multiple_matches(
-    matches: List[MatchData],
+    matches: List[Dict[str, Any]] = Body(...),
     user=Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
 ):
@@ -313,7 +313,7 @@ async def submit_multiple_matches(
 
 @router.post("/submit")
 async def submit_single_match(
-    match: MatchData,
+    match: Dict[str, Any] = Body(...),
     user=Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
 ):

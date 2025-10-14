@@ -8,6 +8,7 @@ from typing import (
     Dict,
     Iterable,
     List,
+    Literal,
     Optional,
     Sequence,
     Set,
@@ -109,6 +110,12 @@ SUPERSCOUT_BUTTON_FIELDS_BY_YEAR: Dict[int, List[Tuple[str, str]]] = {
 TBA_BREAKDOWN_PARSERS_BY_YEAR: Dict[
     int, Callable[[Optional[Dict[str, Any]], Sequence[int]], Dict[str, Any]]
 ] = {}
+
+
+class MatchAlreadyExistsError(Exception):
+    def __init__(self, existing_match: MatchData) -> None:
+        super().__init__("Match data has already been submitted for this match")
+        self.existing_match = existing_match
 
 
 def _get_model_field_names(model: type[SQLModel]) -> List[str]:
@@ -1570,7 +1577,12 @@ async def batch_submit_match(
     user: User,
 ) -> None:
     for match in matches:
-        await submit_scouted_match(session, match, user)
+        try:
+            await submit_scouted_match(session, match, user)
+        except HTTPException as exc:
+            if exc.status_code == 304:
+                continue
+            raise
 
 async def batch_update_match(session: AsyncSession, matches: List[MatchData], user: User):
     for match in matches:
@@ -1627,13 +1639,20 @@ async def submit_scouted_match(
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail="Invalid match data for this season") from exc
 
-    return await _submit_match_for_year(
-        session,
-        typed_match,
-        user,
-        expected_year=event.year,
-        match_model=match_model,
-    )
+    try:
+        return await _submit_match_for_year(
+            session,
+            typed_match,
+            user,
+            expected_year=event.year,
+            match_model=match_model,
+            duplicate_behavior="skip",
+        )
+    except MatchAlreadyExistsError as exc:
+        raise HTTPException(
+            status_code=304,
+            detail="Match data has already been submitted for this match",
+        ) from exc
 
 
 async def submit_prescout_record(
@@ -1784,6 +1803,7 @@ async def _submit_match_for_year(
     *,
     expected_year: int,
     match_model: type[MatchData],
+    duplicate_behavior: Literal["error", "skip"] = "error",
 ) -> MatchData:
     match_payload = _model_dump(match)
     try:
@@ -1860,7 +1880,10 @@ async def _submit_match_for_year(
         match_model.organization_id == getattr(typed_match, "organization_id"),
     )
     result = await session.execute(statement)
-    if result.scalars().first() is not None:
+    existing_match = result.scalars().first()
+    if existing_match is not None:
+        if duplicate_behavior == "skip":
+            raise MatchAlreadyExistsError(cast(MatchData, existing_match))
         raise HTTPException(
             status_code=409,
             detail="Match data has already been submitted for this match",

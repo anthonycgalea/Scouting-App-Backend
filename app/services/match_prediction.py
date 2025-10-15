@@ -7,7 +7,6 @@ from datetime import datetime
 from math import sqrt
 from numbers import Number
 from typing import Any, DefaultDict, Dict, List, Sequence, Set, Tuple, TypeVar
-from uuid import UUID
 
 import numpy as np
 from fastapi import HTTPException
@@ -22,7 +21,6 @@ from models import (
     Prescout2025,
     Season,
     StatboticsData,
-    User,
     UserOrganization,
 )
 from services.event import (
@@ -374,30 +372,13 @@ def _normalize_user_payload(user: Any) -> Dict[str, Any]:
 async def _get_user_membership_or_404(
     session: AsyncSession, user_payload: Dict[str, Any]
 ) -> UserOrganization:
-    user_id = user_payload.get("id")
-    if user_id is None:
-        raise HTTPException(status_code=401, detail="User not authenticated")
-
-    if not isinstance(user_id, UUID):
-        try:
-            user_id = UUID(str(user_id))
-        except (TypeError, ValueError) as exc:  # pragma: no cover - defensive guard
-            raise HTTPException(status_code=400, detail="Invalid user identifier") from exc
-
-    user = await session.get(User, user_id)
-    if user is None:
-        raise HTTPException(status_code=401, detail="User not authenticated")
-
-    membership_id = user.logged_in_user_org
+    membership_id = user_payload.get("user_org")
     if membership_id is None:
         raise HTTPException(status_code=404, detail="User is not logged into an organization")
 
     membership = await session.get(UserOrganization, membership_id)
     if membership is None:
         raise HTTPException(status_code=404, detail="Organization membership not found")
-
-    if membership.user_id != user.id:
-        raise HTTPException(status_code=403, detail="User does not belong to this organization")
 
     return membership
 

@@ -1388,6 +1388,20 @@ async def create_pit_scout_record(
     return typed_pit
 
 
+async def batch_create_pit_scout_records(
+    session: AsyncSession,
+    pits: Sequence[Union[Dict[str, Any], PitScout]],
+    user: Any,
+) -> None:
+    for pit in pits:
+        try:
+            await create_pit_scout_record(session, pit, user)
+        except HTTPException as exc:
+            if exc.status_code == 409:
+                continue
+            raise
+
+
 async def update_pit_scout_record(
     session: AsyncSession,
     pit: Union[Dict[str, Any], PitScout],

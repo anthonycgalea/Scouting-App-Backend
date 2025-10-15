@@ -325,13 +325,6 @@ async def submit_single_match(
     user=Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
 ):
-    logger.info(
-        "Received match submission request for event=%s match=%s%s from user=%s",
-        match.get("event_key"),
-        match.get("match_level"),
-        match.get("match_number"),
-        user.get("id") if isinstance(user, dict) else user,
-    )
     return await submit_scouted_match(session, match, user)
 
 @router.put("/edit/batch")

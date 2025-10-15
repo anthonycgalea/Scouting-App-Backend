@@ -1836,7 +1836,7 @@ async def _submit_match_for_year(
     except ValidationError as exc:  # pragma: no cover - defensive guard
         raise HTTPException(status_code=422, detail="Invalid match data payload") from exc
 
-    user_id: Optional[UUID] = getattr(user, "id", None)
+    user_id: Optional[UUID] = user.get("id")
     if user_id is None:
         raise HTTPException(status_code=401, detail="User not authenticated")
 
@@ -1846,7 +1846,7 @@ async def _submit_match_for_year(
         except ValueError as exc:  # pragma: no cover - defensive programming
             raise HTTPException(status_code=400, detail="Invalid user identifier") from exc
 
-    membership_id = getattr(user, "logged_in_user_org", None)
+    membership_id: Optional[int] = user.get("user_org")
     if membership_id is None:
         raise HTTPException(status_code=404, detail="User is not logged into an organization")
 

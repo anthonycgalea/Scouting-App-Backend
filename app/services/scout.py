@@ -2051,6 +2051,7 @@ async def _submit_record_for_year(
     }
     payload["notes"] = payload.get("notes") or ""
     payload.pop("timestamp", None)
+    payload["timestamp"] = datetime.now()
 
     try:
         typed_record = cast(MatchData, _model_validate(record_model, payload))

@@ -28,6 +28,7 @@ from services.scout import (
     ScoutMatchFilterRequest,
     batch_create_pit_scout_records,
     batch_submit_match,
+    batch_submit_prescout_records,
     batch_update_data_validations,
     batch_update_match,
     create_pit_scout_record,
@@ -299,11 +300,20 @@ async def list_prescout_records(
 
 @router.post("/prescout", response_model=PrescoutResponse, status_code=201)
 async def create_prescout_entry(
-    prescout: MatchData,
+    prescout: Dict[str, Any] = Body(...),
     user=Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     return await submit_prescout_record(session, prescout, user)
+
+
+@router.post("/prescout/batch")
+async def create_multiple_prescout_entries(
+    prescouts: List[Dict[str, Any]] = Body(...),
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await batch_submit_prescout_records(session, prescouts, user)
 
 
 @router.get("/superscout", response_model=List[SuperScoutResponse])

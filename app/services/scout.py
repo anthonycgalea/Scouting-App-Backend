@@ -1793,33 +1793,70 @@ async def submit_scouted_match(
 
 async def submit_prescout_record(
     session: AsyncSession,
-    prescout: MatchData,
+    prescout: Union[MatchData, Dict[str, Any]],
     user: User,
 ) -> MatchData:
-    prescout_payload = _model_dump(prescout)
-    try:
-        base_prescout = _model_validate(MatchData, prescout_payload)
-    except ValidationError as exc:  # pragma: no cover - defensive guard
-        raise HTTPException(status_code=422, detail="Invalid prescout payload") from exc
+    payload = _coerce_payload(prescout)
+    payload = _apply_payload_aliases(payload, _MATCH_SUBMISSION_PAYLOAD_ALIASES)
+    user_payload = _normalize_user_payload(user)
 
-    season = await session.get(Season, base_prescout.season)
-    if season is None:
-        raise HTTPException(status_code=404, detail="Season not found for provided prescout data")
+    event_key = await get_active_event_key_for_user(session, user_payload)
+    event = await get_event_or_404(session, event_key)
 
-    prescout_model = PRESCOUT_MODELS_BY_YEAR.get(season.year)
+    prescout_model = PRESCOUT_MODELS_BY_YEAR.get(event.year)
     if prescout_model is None:
         raise HTTPException(
             status_code=404,
             detail="Prescouting is not available for this season",
         )
 
-    return await _submit_match_for_year(
-        session,
-        prescout,
-        user,
-        expected_year=season.year,
-        match_model=prescout_model,
+    season = await get_season_by_year_or_404(session, event.year)
+    membership = await _get_user_membership_or_404(session, user_payload)
+    user_id = await _normalize_user_id(user_payload)
+
+    prepared_payload = _prepare_match_submission_payload(
+        payload,
+        event_key=event_key,
+        season=season,
+        membership=membership,
+        user_id=user_id,
     )
+    prepared_payload["notes"] = prepared_payload.get("notes") or ""
+    prepared_payload.pop("timestamp", None)
+
+    try:
+        typed_prescout = cast(MatchData, _model_validate(prescout_model, prepared_payload))
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="Invalid prescout data for this season") from exc
+
+    try:
+        return await _submit_match_for_year(
+            session,
+            typed_prescout,
+            user,
+            expected_year=event.year,
+            match_model=prescout_model,
+            duplicate_behavior="skip",
+        )
+    except MatchAlreadyExistsError as exc:
+        raise HTTPException(
+            status_code=304,
+            detail="Prescout data has already been submitted for this match",
+        ) from exc
+
+
+async def batch_submit_prescout_records(
+    session: AsyncSession,
+    prescouts: Sequence[Union[MatchData, Dict[str, Any]]],
+    user: User,
+) -> None:
+    for prescout in prescouts:
+        try:
+            await submit_prescout_record(session, prescout, user)
+        except HTTPException as exc:
+            if exc.status_code in (304, 409):
+                continue
+            raise
 
 
 async def submit_superscout_record(

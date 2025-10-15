@@ -16,6 +16,7 @@ from typing import (
     TypeVar,
     Union,
     cast,
+    NoReturn,
 )
 
 import httpx
@@ -150,6 +151,11 @@ def _model_validate(model: type[SQLModel], payload: Dict[str, Any]) -> SQLModel:
     return model.parse_obj(payload)  # type: ignore[attr-defined]
 
 
+def _raise_validation_error(message: str, exc: ValidationError) -> NoReturn:
+    detail = {"message": message, "errors": exc.errors()}
+    raise HTTPException(status_code=422, detail=detail) from exc
+
+
 def _model_dump(instance: SQLModel) -> Dict[str, Any]:
     if hasattr(instance, "model_dump"):
         data = instance.model_dump()  # type: ignore[attr-defined]
@@ -208,7 +214,7 @@ async def _prepare_match_update(
     try:
         base_match = cast(MatchData, _model_validate(MatchData, match_payload))
     except ValidationError as exc:  # pragma: no cover - defensive guard
-        raise HTTPException(status_code=422, detail="Invalid match data payload") from exc
+        _raise_validation_error("Invalid match data payload", exc)
 
     user_payload = _normalize_user_payload(user)
 
@@ -259,7 +265,7 @@ async def _prepare_match_update(
     try:
         typed_match = cast(MatchData, _model_validate(match_model, match_payload))
     except ValidationError as exc:
-        raise HTTPException(status_code=422, detail="Invalid match data for this event") from exc
+        _raise_validation_error("Invalid match data for this event", exc)
 
     alliance_organization_ids_tuple = tuple(alliance_organization_ids)
 
@@ -1367,7 +1373,7 @@ async def create_pit_scout_record(
     try:
         typed_pit = cast(PitScout, _model_validate(pit_model, payload))
     except ValidationError as exc:
-        raise HTTPException(status_code=422, detail="Invalid pit scouting data for this event") from exc
+        _raise_validation_error("Invalid pit scouting data for this event", exc)
 
     statement = select(pit_model).where(
         pit_model.event_key == event_key,
@@ -1457,7 +1463,7 @@ async def update_pit_scout_record(
     try:
         typed_pit = cast(PitScout, _model_validate(pit_model, merged_payload))
     except ValidationError as exc:
-        raise HTTPException(status_code=422, detail="Invalid pit scouting data for this event") from exc
+        _raise_validation_error("Invalid pit scouting data for this event", exc)
 
     valid_fields = set(_get_model_field_names(pit_model))
     protected_fields = {"event_key", "team_number", "user_id", "organization_id"}
@@ -1774,7 +1780,7 @@ async def submit_scouted_match(
     try:
         typed_match = cast(MatchData, _model_validate(match_model, prepared_payload))
     except ValidationError as exc:
-        raise HTTPException(status_code=422, detail="Invalid match data for this season") from exc
+        _raise_validation_error("Invalid match data for this season", exc)
 
     try:
         return await _submit_match_for_year(
@@ -1828,7 +1834,7 @@ async def submit_prescout_record(
     try:
         typed_prescout = cast(MatchData, _model_validate(prescout_model, prepared_payload))
     except ValidationError as exc:
-        raise HTTPException(status_code=422, detail="Invalid prescout data for this season") from exc
+        _raise_validation_error("Invalid prescout data for this season", exc)
 
     try:
         return await _submit_prescout_for_year(
@@ -1936,7 +1942,7 @@ async def submit_superscout_record(
     try:
         typed_superscout = cast(SuperScoutData, _model_validate(superscout_model, payload))
     except ValidationError as exc:
-        raise HTTPException(status_code=422, detail="Invalid superscout data for this season") from exc
+        _raise_validation_error("Invalid superscout data for this season", exc)
 
     statement = select(superscout_model).where(
         superscout_model.event_key == getattr(typed_superscout, "event_key"),
@@ -1985,9 +1991,7 @@ async def _submit_record_for_year(
     try:
         base_record = _model_validate(MatchData, record_payload)
     except ValidationError as exc:  # pragma: no cover - defensive guard
-        raise HTTPException(
-            status_code=422, detail=f"Invalid {record_label} payload"
-        ) from exc
+        _raise_validation_error(f"Invalid {record_label} payload", exc)
 
     user_id: Optional[UUID] = user.get("id")
     if user_id is None:
@@ -2051,9 +2055,7 @@ async def _submit_record_for_year(
     try:
         typed_record = cast(MatchData, _model_validate(record_model, payload))
     except ValidationError as exc:
-        raise HTTPException(
-            status_code=422, detail=f"Invalid {record_label} for this season"
-        ) from exc
+        _raise_validation_error(f"Invalid {record_label} for this season", exc)
 
     statement = select(record_model).where(
         record_model.event_key == getattr(typed_record, "event_key"),
@@ -2149,7 +2151,7 @@ async def _edit_match_for_year(
     try:
         base_match = _model_validate(MatchData, match_payload)
     except ValidationError as exc:  # pragma: no cover - defensive guard
-        raise HTTPException(status_code=422, detail="Invalid match data payload") from exc
+        _raise_validation_error("Invalid match data payload", exc)
 
     user_id: Optional[UUID] = getattr(user, "id", None)
     if user_id is None and isinstance(user, dict):
@@ -2232,7 +2234,7 @@ async def _edit_match_for_year(
     try:
         typed_match = cast(MatchDataType, _model_validate(match_model, payload))
     except ValidationError as exc:
-        raise HTTPException(status_code=422, detail="Invalid match data for this season") from exc
+        _raise_validation_error("Invalid match data for this season", exc)
 
     statement = select(match_model).where(
         match_model.event_key == getattr(typed_match, "event_key"),

@@ -139,3 +139,59 @@ def test_submit_match_accepts_camel_case_payload_aliases(setup_database):
     stored_match = asyncio.run(_fetch_match())
     assert stored_match is not None
     assert stored_match.notes == payload["notes"]
+
+
+def test_batch_submit_match_skips_duplicates(setup_database):
+    context = asyncio.run(_prepare_match_submission_context())
+
+    async def override_current_user():
+        return {
+            "id": str(context["user_id"]),
+            "displayName": "Alias User",
+            "email": "alias@example.com",
+            "user_org": context["membership_id"],
+        }
+
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    payload = {
+        "team_number": context["team_number"],
+        "match_number": 71,
+        "match_level": "qm",
+        "notes": "Duplicate batch match",
+        "endgame": Endgame2025.DEEP.value,
+        "event_key": context["event_key"],
+        "a_net": 0,
+        "a_processor": 0,
+        "al1c": 0,
+        "al2c": 0,
+        "al3c": 0,
+        "al4c": 0,
+        "t_net": 0,
+        "t_processor": 0,
+        "tl1c": 0,
+        "tl2c": 0,
+        "tl3c": 0,
+        "tl4c": 0,
+    }
+
+    with TestClient(app) as client:
+        response = client.post("/scout/submit/batch", json=[payload, payload])
+
+    app.dependency_overrides.pop(get_current_user, None)
+
+    assert response.status_code == 200
+
+    async def _fetch_matches():
+        async with AsyncSessionLocal() as session:
+            statement = select(MatchData2025).where(
+                MatchData2025.event_key == context["event_key"],
+                MatchData2025.match_number == payload["match_number"],
+                MatchData2025.match_level == payload["match_level"],
+                MatchData2025.team_number == context["team_number"],
+            )
+            result = await session.execute(statement)
+            return result.scalars().all()
+
+    stored_matches = asyncio.run(_fetch_matches())
+    assert len(stored_matches) == 1

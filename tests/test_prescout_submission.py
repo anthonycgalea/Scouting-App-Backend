@@ -10,6 +10,7 @@ from app.main import app
 from app.models import (
     Endgame2025,
     FRCEvent,
+    MatchData2025,
     Organization,
     OrganizationEvent,
     Prescout2025,
@@ -139,3 +140,48 @@ def test_submit_prescout_record_with_scoring_fields(setup_database):
     assert stored.tl4c == payload["tl4c"]
     assert stored.aProcessor == payload["aProcessor"]
     assert stored.endgame == Endgame2025.DEEP
+
+
+def test_submit_prescout_record_ignores_match_duplicates(setup_database):
+    context = asyncio.run(_prepare_prescout_context())
+
+    async def _create_match_record():
+        async with AsyncSessionLocal() as session:
+            match = MatchData2025(
+                season=99,
+                team_number=context["team_number"],
+                event_key=context["event_key"],
+                match_number=12,
+                match_level="qm",
+                user_id=context["user_id"],
+                organization_id=context["organization_id"],
+            )
+            session.add(match)
+            await session.commit()
+
+    asyncio.run(_create_match_record())
+
+    async def override_current_user():
+        return {
+            "id": str(context["user_id"]),
+            "displayName": "Prescout User",
+            "email": "prescout@example.com",
+            "user_org": context["membership_id"],
+        }
+
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    payload = {
+        "teamNumber": context["team_number"],
+        "matchNumber": 12,
+        "matchLevel": "qm",
+        "notes": None,
+    }
+
+    with TestClient(app) as client:
+        response = client.post("/scout/prescout", json=payload)
+
+    app.dependency_overrides.pop(get_current_user, None)
+
+    assert response.status_code == 201
+

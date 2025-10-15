@@ -13,6 +13,7 @@ from app.models import (
     MatchData2025,
     Organization,
     OrganizationEvent,
+    Prescout2025,
     Season,
     TeamRecord,
     User,
@@ -195,3 +196,61 @@ def test_batch_submit_match_skips_duplicates(setup_database):
 
     stored_matches = asyncio.run(_fetch_matches())
     assert len(stored_matches) == 1
+
+
+def test_submit_match_record_ignores_prescout_duplicates(setup_database):
+    context = asyncio.run(_prepare_match_submission_context())
+
+    async def _create_prescout_record():
+        async with AsyncSessionLocal() as session:
+            prescout = Prescout2025(
+                season=context["season_id"],
+                team_number=context["team_number"],
+                event_key=context["event_key"],
+                match_number=71,
+                match_level="qm",
+                user_id=context["user_id"],
+                organization_id=context["organization_id"],
+            )
+            session.add(prescout)
+            await session.commit()
+
+    asyncio.run(_create_prescout_record())
+
+    async def override_current_user():
+        return {
+            "id": str(context["user_id"]),
+            "displayName": "Alias User",
+            "email": "alias@example.com",
+            "user_org": context["membership_id"],
+        }
+
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    payload = {
+        "teamNumber": context["team_number"],
+        "matchNumber": 71,
+        "matchLevel": "qm",
+        "notes": "Prescout duplicate present",
+        "endgame": Endgame2025.DEEP.value,
+        "eventKey": context["event_key"],
+        "aNet": 0,
+        "aProcessor": 0,
+        "al1c": 0,
+        "al2c": 0,
+        "al3c": 0,
+        "al4c": 0,
+        "tNet": 0,
+        "tProcessor": 0,
+        "tl1c": 0,
+        "tl2c": 0,
+        "tl3c": 0,
+        "tl4c": 0,
+    }
+
+    with TestClient(app) as client:
+        response = client.post("/scout/submit", json=payload)
+
+    app.dependency_overrides.pop(get_current_user, None)
+
+    assert response.status_code == 200

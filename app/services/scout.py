@@ -1830,12 +1830,12 @@ async def submit_prescout_record(
         raise HTTPException(status_code=422, detail="Invalid prescout data for this season") from exc
 
     try:
-        return await _submit_match_for_year(
+        return await _submit_prescout_for_year(
             session,
             typed_prescout,
             user,
             expected_year=event.year,
-            match_model=prescout_model,
+            prescout_model=prescout_model,
             duplicate_behavior="skip",
         )
     except MatchAlreadyExistsError as exc:
@@ -1969,20 +1969,24 @@ async def submit_superscout_record(
     return typed_superscout
 
 
-async def _submit_match_for_year(
+
+async def _submit_record_for_year(
     session: AsyncSession,
-    match: MatchData,
+    record: MatchData,
     user: User,
     *,
     expected_year: int,
-    match_model: type[MatchData],
+    record_model: type[MatchData],
+    record_label: str,
     duplicate_behavior: Literal["error", "skip"] = "error",
 ) -> MatchData:
-    match_payload = _model_dump(match)
+    record_payload = _model_dump(record)
     try:
-        base_match = _model_validate(MatchData, match_payload)
+        base_record = _model_validate(MatchData, record_payload)
     except ValidationError as exc:  # pragma: no cover - defensive guard
-        raise HTTPException(status_code=422, detail="Invalid match data payload") from exc
+        raise HTTPException(
+            status_code=422, detail=f"Invalid {record_label} payload"
+        ) from exc
 
     user_id: Optional[UUID] = user.get("id")
     if user_id is None:
@@ -2005,77 +2009,122 @@ async def _submit_match_for_year(
     if membership.user_id != user_id:
         raise HTTPException(status_code=403, detail="User does not belong to this organization")
 
-    if base_match.organization_id != membership.organization_id:
+    if base_record.organization_id != membership.organization_id:
         raise HTTPException(
             status_code=403,
-            detail="Match data does not belong to the active organization",
+            detail=f"{record_label.capitalize()} does not belong to the active organization",
         )
 
-    event = await get_event_or_404(session, base_match.event_key)
+    event = await get_event_or_404(session, base_record.event_key)
     if event.year != expected_year:
         raise HTTPException(
             status_code=400,
-            detail="Match data event does not match the expected season year",
+            detail=f"{record_label.capitalize()} event does not match the expected season year",
         )
 
-    season = await session.get(Season, base_match.season)
+    season = await session.get(Season, base_record.season)
     if season is None:
-        raise HTTPException(status_code=404, detail="Season not found for provided match data")
+        raise HTTPException(status_code=404, detail=f"Season not found for provided {record_label}")
 
     if season.year != expected_year:
         raise HTTPException(
             status_code=400,
-            detail="Match data season does not match the expected season year",
+            detail=f"{record_label.capitalize()} season does not match the expected season year",
         )
 
-    match_user_id = getattr(base_match, "user_id", None)
-    if match_user_id and match_user_id != user_id:
+    record_user_id = getattr(base_record, "user_id", None)
+    if record_user_id and record_user_id != user_id:
         raise HTTPException(
             status_code=403,
-            detail="Match data user does not match the authenticated user",
+            detail=f"{record_label.capitalize()} user does not match the authenticated user",
         )
 
-    payload = {**match_payload, "user_id": user_id, "organization_id": membership.organization_id}
+    payload = {
+        **record_payload,
+        "user_id": user_id,
+        "organization_id": membership.organization_id,
+    }
     payload["notes"] = payload.get("notes") or ""
     payload.pop("timestamp", None)
 
     try:
-        typed_match = cast(MatchData, _model_validate(match_model, payload))
+        typed_record = cast(MatchData, _model_validate(record_model, payload))
     except ValidationError as exc:
-        raise HTTPException(status_code=422, detail="Invalid match data for this season") from exc
+        raise HTTPException(
+            status_code=422, detail=f"Invalid {record_label} for this season"
+        ) from exc
 
-    statement = select(match_model).where(
-        match_model.event_key == getattr(typed_match, "event_key"),
-        match_model.match_number == getattr(typed_match, "match_number"),
-        match_model.match_level == getattr(typed_match, "match_level"),
-        match_model.team_number == getattr(typed_match, "team_number"),
-        match_model.user_id == getattr(typed_match, "user_id"),
-        match_model.organization_id == getattr(typed_match, "organization_id"),
+    statement = select(record_model).where(
+        record_model.event_key == getattr(typed_record, "event_key"),
+        record_model.match_number == getattr(typed_record, "match_number"),
+        record_model.match_level == getattr(typed_record, "match_level"),
+        record_model.team_number == getattr(typed_record, "team_number"),
+        record_model.user_id == getattr(typed_record, "user_id"),
+        record_model.organization_id == getattr(typed_record, "organization_id"),
     )
     result = await session.execute(statement)
-    existing_match = result.scalars().first()
-    if existing_match is not None:
+    existing_record = result.scalars().first()
+    if existing_record is not None:
         if duplicate_behavior == "skip":
-            raise MatchAlreadyExistsError(cast(MatchData, existing_match))
+            raise MatchAlreadyExistsError(cast(MatchData, existing_record))
         raise HTTPException(
             status_code=409,
-            detail="Match data has already been submitted for this match",
+            detail=f"{record_label.capitalize()} has already been submitted for this match",
         )
 
-    session.add(typed_match)
+    session.add(typed_record)
     try:
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
         raise HTTPException(
             status_code=409,
-            detail="Match data has already been submitted for this match",
+            detail=f"{record_label.capitalize()} has already been submitted for this match",
         ) from exc
 
-    await session.refresh(typed_match)
+    await session.refresh(typed_record)
 
-    return typed_match
+    return typed_record
 
+
+async def _submit_match_for_year(
+    session: AsyncSession,
+    match: MatchData,
+    user: User,
+    *,
+    expected_year: int,
+    match_model: type[MatchData],
+    duplicate_behavior: Literal["error", "skip"] = "error",
+) -> MatchData:
+    return await _submit_record_for_year(
+        session,
+        match,
+        user,
+        expected_year=expected_year,
+        record_model=match_model,
+        record_label="match data",
+        duplicate_behavior=duplicate_behavior,
+    )
+
+
+async def _submit_prescout_for_year(
+    session: AsyncSession,
+    prescout: MatchData,
+    user: User,
+    *,
+    expected_year: int,
+    prescout_model: type[MatchData],
+    duplicate_behavior: Literal["error", "skip"] = "error",
+) -> MatchData:
+    return await _submit_record_for_year(
+        session,
+        prescout,
+        user,
+        expected_year=expected_year,
+        record_model=prescout_model,
+        record_label="prescout data",
+        duplicate_behavior=duplicate_behavior,
+    )
 
 async def submit_2025_match(session: AsyncSession, match: MatchData2025, user: User) -> MatchData:
     return await _submit_match_for_year(

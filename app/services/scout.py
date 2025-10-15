@@ -1038,13 +1038,22 @@ async def _normalize_user_id(user_payload: Dict[str, Any]) -> UUID:
 async def _get_user_membership_or_404(
     session: AsyncSession, user_payload: Dict[str, Any]
 ) -> UserOrganization:
-    membership_id = user_payload.get("user_org")
+    user_id = await _normalize_user_id(user_payload)
+
+    user = await session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not authenticated")
+
+    membership_id = user.logged_in_user_org
     if membership_id is None:
         raise HTTPException(status_code=404, detail="User is not logged into an organization")
 
     membership = await session.get(UserOrganization, membership_id)
     if membership is None:
         raise HTTPException(status_code=404, detail="Organization membership not found")
+
+    if membership.user_id != user.id:
+        raise HTTPException(status_code=403, detail="User does not belong to this organization")
 
     return membership
 

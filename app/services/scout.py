@@ -121,6 +121,13 @@ _MATCH_SUBMISSION_PAYLOAD_ALIASES: Dict[str, str] = {
     "userId": "user_id",
 }
 
+_PIT_SCOUT_PAYLOAD_ALIASES: Dict[str, str] = {
+    "teamNumber": "team_number",
+    "eventKey": "event_key",
+    "organizationId": "organization_id",
+    "userId": "user_id",
+}
+
 
 class MatchAlreadyExistsError(Exception):
     def __init__(self, existing_match: MatchData) -> None:
@@ -1347,6 +1354,7 @@ async def create_pit_scout_record(
     user: Any,
 ) -> PitScout:
     payload = _coerce_payload(pit)
+    payload = _apply_payload_aliases(payload, _PIT_SCOUT_PAYLOAD_ALIASES)
     user_payload = _normalize_user_payload(user)
 
     pit_model, _season, user_id, _membership, event_key = await _prepare_pit_payload(
@@ -1386,6 +1394,7 @@ async def update_pit_scout_record(
     user: Any,
 ) -> PitScout:
     payload = _coerce_payload(pit)
+    payload = _apply_payload_aliases(payload, _PIT_SCOUT_PAYLOAD_ALIASES)
     user_payload = _normalize_user_payload(user)
 
     event_key = await get_active_event_key_for_user(session, user_payload)

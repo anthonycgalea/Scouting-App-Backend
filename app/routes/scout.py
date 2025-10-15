@@ -26,6 +26,7 @@ from services.scout import (
     DataValidationFilterRequest,
     DataValidationUpdateRequest,
     ScoutMatchFilterRequest,
+    batch_create_pit_scout_records,
     batch_submit_match,
     batch_update_data_validations,
     batch_update_match,
@@ -258,6 +259,15 @@ async def create_pit_scout_entry(
     session: AsyncSession = Depends(get_session),
 ):
     return await create_pit_scout_record(session, pit, user)
+
+
+@router.post("/pit/batch")
+async def create_multiple_pit_scout_entries(
+    pits: List[Dict[str, Any]] = Body(...),
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await batch_create_pit_scout_records(session, pits, user)
 
 
 @router.patch("/pit", response_model=PitScoutResponse)

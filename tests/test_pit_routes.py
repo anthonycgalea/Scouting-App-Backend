@@ -42,8 +42,12 @@ async def _prepare_pit_scouting_data():
             updated_at=datetime.utcnow(),
         )
         team = TeamRecord(teamNumber=9999, teamName="Team 9999")
+        extra_teams = [
+            TeamRecord(teamNumber=8888, teamName="Team 8888"),
+            TeamRecord(teamNumber=7777, teamName="Team 7777"),
+        ]
 
-        session.add_all([season, event, organization, user, team])
+        session.add_all([season, event, organization, user, team, *extra_teams])
         await session.commit()
         await session.refresh(organization)
 
@@ -73,6 +77,7 @@ async def _prepare_pit_scouting_data():
             "organization_id": organization.id,
             "season_id": season.id,
             "team_number": team.teamNumber,
+            "extra_team_numbers": [team.teamNumber for team in extra_teams],
         }
 
 
@@ -144,3 +149,36 @@ def test_pit_scout_crud_flow(pit_client):
     final_list = client.get("/scout/pit")
     assert final_list.status_code == 200
     assert final_list.json() == []
+
+
+def test_pit_scout_batch_submission(pit_client):
+    client, data = pit_client
+
+    batch_payload = [
+        {
+            "team_number": team_number,
+            "notes": f"Pit notes for {team_number}",
+            "robot_weight": 110 + index,
+            "drivetrain": "SWERVE",
+            "autoCoralCount": index,
+            "teleNotes": f"Tele notes {team_number}",
+            "overallNotes": f"Overall notes {team_number}",
+        }
+        for index, team_number in enumerate(data["extra_team_numbers"], start=1)
+    ]
+
+    response = client.post("/scout/pit/batch", json=batch_payload)
+    assert response.status_code == 200
+
+    list_response = client.get("/scout/pit")
+    assert list_response.status_code == 200
+    records = list_response.json()
+    assert len(records) == len(batch_payload)
+    returned_team_numbers = {record["team_number"] for record in records}
+    assert returned_team_numbers == set(data["extra_team_numbers"])
+
+    for team_number in data["extra_team_numbers"]:
+        delete_response = client.request(
+            "DELETE", "/scout/pit", json={"team_number": team_number}
+        )
+        assert delete_response.status_code == 204

@@ -25,6 +25,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import and_, or_
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm.attributes import InstrumentedAttribute
 from sqlmodel import SQLModel, delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from uuid import UUID
@@ -162,7 +163,11 @@ def _model_dump(instance: SQLModel) -> Dict[str, Any]:
         extra = getattr(instance, "model_extra", None)
         if isinstance(extra, dict):
             data.update(extra)
-        return data
+        return {
+            key: value
+            for key, value in data.items()
+            if not isinstance(value, InstrumentedAttribute)
+        }
 
     data = instance.dict()  # type: ignore[attr-defined]
     if hasattr(instance, "__dict__"):
@@ -170,7 +175,11 @@ def _model_dump(instance: SQLModel) -> Dict[str, Any]:
             if key in data or key.startswith("_"):
                 continue
             data[key] = value
-    return data
+    return {
+        key: value
+        for key, value in data.items()
+        if not isinstance(value, InstrumentedAttribute)
+    }
 
 
 def _coerce_payload(data: Union[SQLModel, Dict[str, Any]]) -> Dict[str, Any]:

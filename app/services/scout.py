@@ -787,6 +787,53 @@ class ScoutMatchFilterRequest(SQLModel):
     teamNumber: Optional[int] = None
 
 
+async def get_scouted_match_summaries(
+    session: AsyncSession,
+    user: Any,
+) -> List[Dict[str, Any]]:
+    user_payload = _normalize_user_payload(user)
+
+    event_key = await get_active_event_key_for_user(session, user_payload)
+    event = await get_event_or_404(session, event_key)
+
+    membership = await _get_user_membership_or_404(session, user_payload)
+
+    match_model = MATCH_DATA_MODELS_BY_YEAR.get(event.year)
+    if match_model is None:
+        raise HTTPException(status_code=404, detail="Match data is not available for this event")
+
+    alliance_organization_ids = await get_scouting_alliance_organization_ids(
+        session, event_key, membership.organization_id
+    )
+
+    if not alliance_organization_ids:
+        return []
+
+    statement = (
+        select(
+            match_model.event_key.label("event_code"),
+            match_model.team_number.label("team_number"),
+            match_model.match_number.label("match_number"),
+            match_model.match_level.label("match_level"),
+            match_model.organization_id.label("organization_id"),
+        )
+        .where(
+            match_model.event_key == event_key,
+            match_model.organization_id.in_(tuple(alliance_organization_ids)),
+        )
+        .distinct()
+        .order_by(
+            match_model.match_level,
+            match_model.match_number,
+            match_model.team_number,
+            match_model.organization_id,
+        )
+    )
+
+    result = await session.execute(statement)
+    return [dict(row) for row in result.mappings().all()]
+
+
 async def get_already_scouted_matches(
     session: AsyncSession,
     user: dict,
@@ -1132,6 +1179,47 @@ def _get_pit_model_for_event(event_year: int) -> type[PitScout]:
         raise HTTPException(status_code=404, detail="Pit scouting is not available for this event year")
 
     return pit_model
+
+
+async def get_pit_scout_summaries(
+    session: AsyncSession,
+    user: Any,
+) -> List[Dict[str, Any]]:
+    user_payload = _normalize_user_payload(user)
+
+    event_key = await get_active_event_key_for_user(session, user_payload)
+    event = await get_event_or_404(session, event_key)
+
+    membership = await _get_user_membership_or_404(session, user_payload)
+
+    pit_model = _get_pit_model_for_event(event.year)
+
+    alliance_organization_ids = await get_scouting_alliance_organization_ids(
+        session, event_key, membership.organization_id
+    )
+
+    if not alliance_organization_ids:
+        return []
+
+    statement = (
+        select(
+            pit_model.event_key.label("event_code"),
+            pit_model.team_number.label("team_number"),
+            pit_model.organization_id.label("organization_id"),
+        )
+        .where(
+            pit_model.event_key == event_key,
+            pit_model.organization_id.in_(tuple(alliance_organization_ids)),
+        )
+        .distinct()
+        .order_by(
+            pit_model.team_number,
+            pit_model.organization_id,
+        )
+    )
+
+    result = await session.execute(statement)
+    return [dict(row) for row in result.mappings().all()]
 
 
 async def get_pit_scout_records(

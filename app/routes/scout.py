@@ -32,12 +32,14 @@ from services.scout import (
     create_pit_scout_record,
     delete_pit_scout_record,
     get_already_scouted_matches,
+    get_data_validations_for_active_event,
+    get_pit_scout_records,
+    get_pit_scout_summaries,
     get_prescout_records,
+    get_scouted_match_summaries,
     get_superscout_field_options,
     get_superscout_records,
     get_superscouted_match_alliances,
-    get_data_validations_for_active_event,
-    get_pit_scout_records,
     PitScoutDeleteRequest,
     PRESCOUT_MODELS_BY_YEAR,
     SUPERSCOUT_MODELS_BY_YEAR,
@@ -61,6 +63,36 @@ class SuperScoutMatchAllianceStatus(BaseModel):
     matchNumber: int
     red: bool
     blue: bool
+
+
+class ScoutedMatchSummary(BaseModel):
+    event_code: str
+    team_number: int
+    match_number: int
+    match_level: str
+    organization_id: int
+
+
+class PitScoutSummary(BaseModel):
+    event_code: str
+    team_number: int
+    organization_id: int
+
+
+@router.get("/scouted", response_model=List[ScoutedMatchSummary])
+async def list_scouted_matches(
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await get_scouted_match_summaries(session, user)
+
+
+@router.get("/pitscouted", response_model=List[PitScoutSummary])
+async def list_pit_scouted_teams(
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await get_pit_scout_summaries(session, user)
 
 
 @router.get("/dataValidation", response_model=List[DataValidation])

@@ -35,8 +35,8 @@ class MatchData2025(MatchData, table=True):
     endgame: Endgame2025 = Field(default=Endgame2025.NONE)
 
 
-class Prescout2025(MatchData, table=True):
-    """Prescout table that shares the base match-scoped columns."""
+class Prescout2025(MatchData2025, table=True):
+    """Prescout table that reuses the 2025 scoring schema."""
 
     __tablename__ = "prescout2025"
 

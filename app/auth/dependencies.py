@@ -1,9 +1,11 @@
+import logging
 import os
-from jose import jwt, JWTError
-from fastapi import Header, HTTPException, Depends
+from datetime import datetime
+
+from fastapi import Depends, Header, HTTPException
+from jose import JWTError, jwt
 from dotenv import load_dotenv
 from sqlmodel.ext.asyncio.session import AsyncSession
-from datetime import datetime
 
 from db.database import get_session
 from models import User
@@ -11,21 +13,26 @@ from models import User
 # Load .env file
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
 
 if not SUPABASE_JWT_SECRET:
     raise RuntimeError("SUPABASE_JWT_SECRET is not set in environment variables")
+
 
 async def get_current_user(
     authorization: str = Header(...),
     session: AsyncSession = Depends(get_session)
 ):
     if not authorization.startswith("Bearer "):
+        logger.warning("Authorization header missing Bearer token prefix")
         raise HTTPException(status_code=401, detail="Missing Bearer token")
 
     token = authorization.split(" ")[1]
 
     try:
+        logger.debug("Decoding JWT token for authorization")
         payload = jwt.decode(
             token,
             SUPABASE_JWT_SECRET,
@@ -41,8 +48,10 @@ async def get_current_user(
             or email
         )
 
+        logger.debug("Looking up user %s in database", user_id)
         db_user = await session.get(User, user_id)
         if not db_user:
+            logger.info("User %s not found in database. Creating new record.", user_id)
             db_user = User(
                 id=user_id,
                 email=email,
@@ -55,6 +64,13 @@ async def get_current_user(
             await session.commit()
             await session.refresh(db_user)
 
+        logger.debug(
+            "Authenticated request for user %s (%s) with organization %s",
+            user_id,
+            email,
+            db_user.logged_in_user_org,
+        )
+
         return {
             "id": str(db_user.id),
             "displayName": db_user.display_name,
@@ -62,6 +78,6 @@ async def get_current_user(
             "user_org": db_user.logged_in_user_org
         }
 
-    except JWTError as e:
-        print("❌ JWT decode error:", str(e))
-        raise HTTPException(status_code=401, detail="Invalid token")
+    except JWTError as exc:
+        logger.exception("JWT decode error while processing authorization header")
+        raise HTTPException(status_code=401, detail="Invalid token") from exc

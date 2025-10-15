@@ -19,6 +19,7 @@ from typing import (
 )
 
 import httpx
+from datetime import datetime
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import and_, or_
@@ -1822,7 +1823,7 @@ async def submit_prescout_record(
         user_id=user_id,
     )
     prepared_payload["notes"] = prepared_payload.get("notes") or ""
-    prepared_payload.pop("timestamp", None)
+    prepared_payload.pop("timestamp", datetime.now())
 
     try:
         typed_prescout = cast(MatchData, _model_validate(prescout_model, prepared_payload))

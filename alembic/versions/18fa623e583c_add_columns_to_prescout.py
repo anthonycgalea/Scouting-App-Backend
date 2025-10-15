@@ -1,11 +1,10 @@
-"""Expand prescout2025 schema with 2025 scoring fields
+"""add columns to prescout
 
-Revision ID: 1b7d8b3a3b8d
-Revises: 033016c23fe8
-Create Date: 2025-02-02 00:00:00.000000
+Revision ID: 18fa623e583c
+Revises: 109dc5af22cf
+Create Date: 2025-10-15 18:02:57.423890
 
 """
-
 from typing import Sequence, Union
 
 from alembic import op
@@ -13,8 +12,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = "1b7d8b3a3b8d"
-down_revision: Union[str, Sequence[str], None] = "033016c23fe8"
+revision: str = '18fa623e583c'
+down_revision: Union[str, Sequence[str], None] = '109dc5af22cf'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

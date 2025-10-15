@@ -1715,7 +1715,7 @@ async def batch_submit_match(
         try:
             await submit_scouted_match(session, match, user)
         except HTTPException as exc:
-            if exc.status_code == 304:
+            if exc.status_code in (304, 409):
                 continue
             raise
 

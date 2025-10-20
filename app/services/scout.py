@@ -2075,16 +2075,19 @@ async def _submit_record_for_year(
     except ValidationError as exc:
         _raise_validation_error(f"Invalid {record_label} for this season", exc)
 
-    statement = select(record_model).where(
-        record_model.event_key == getattr(typed_record, "event_key"),
-        record_model.match_number == getattr(typed_record, "match_number"),
-        record_model.match_level == getattr(typed_record, "match_level"),
-        record_model.team_number == getattr(typed_record, "team_number"),
-        record_model.user_id == getattr(typed_record, "user_id"),
-        record_model.organization_id == getattr(typed_record, "organization_id"),
+    statement = (
+        select(record_model)
+        .select_from(record_model.__table__)
+        .where(
+            record_model.event_key == getattr(typed_record, "event_key"),
+            record_model.match_number == getattr(typed_record, "match_number"),
+            record_model.match_level == getattr(typed_record, "match_level"),
+            record_model.team_number == getattr(typed_record, "team_number"),
+            record_model.user_id == getattr(typed_record, "user_id"),
+            record_model.organization_id == getattr(typed_record, "organization_id"),
+        )
     )
-    result = await session.execute(statement)
-    existing_record = result.scalars().first()
+    existing_record = await session.scalar(statement)
     if existing_record is not None:
         if duplicate_behavior == "skip":
             raise MatchAlreadyExistsError(cast(MatchData, existing_record))

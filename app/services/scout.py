@@ -39,6 +39,7 @@ from models import (
     MatchSchedule,
     PitScout,
     PitScout2025,
+    PredictionQueue,
     Season,
     SuperScoutData,
     SuperScoutData2025,
@@ -2120,7 +2121,7 @@ async def _submit_match_for_year(
     match_model: type[MatchData],
     duplicate_behavior: Literal["error", "skip"] = "error",
 ) -> MatchData:
-    return await _submit_record_for_year(
+    typed_match = await _submit_record_for_year(
         session,
         match,
         user,
@@ -2129,6 +2130,107 @@ async def _submit_match_for_year(
         record_label="match data",
         duplicate_behavior=duplicate_behavior,
     )
+
+    await _enqueue_unplayed_matches_for_prediction_queue(
+        session,
+        typed_match,
+        match_model,
+    )
+
+    return typed_match
+
+
+async def _enqueue_unplayed_matches_for_prediction_queue(
+    session: AsyncSession,
+    match: MatchData,
+    match_model: type[MatchData],
+) -> None:
+    organization_id = getattr(match, "organization_id", None)
+    event_key = getattr(match, "event_key", None)
+    team_number = getattr(match, "team_number", None)
+
+    if not organization_id or not event_key or not team_number:
+        return
+
+    accessible_org_ids = await get_scouting_alliance_organization_ids(
+        session,
+        event_key,
+        int(organization_id),
+    )
+
+    if not accessible_org_ids:
+        accessible_org_ids = {int(organization_id)}
+
+    schedule_statement = (
+        select(MatchSchedule.match_number, MatchSchedule.match_level)
+        .where(
+            MatchSchedule.event_key == event_key,
+            or_(
+                MatchSchedule.red1_id == team_number,
+                MatchSchedule.red2_id == team_number,
+                MatchSchedule.red3_id == team_number,
+                MatchSchedule.blue1_id == team_number,
+                MatchSchedule.blue2_id == team_number,
+                MatchSchedule.blue3_id == team_number,
+            ),
+        )
+    )
+    schedule_result = await session.execute(schedule_statement)
+    scheduled_matches = {
+        (row.match_number, row.match_level) for row in schedule_result
+    }
+
+    if not scheduled_matches:
+        return
+
+    existing_statement = (
+        select(match_model.match_number, match_model.match_level)
+        .where(
+            match_model.event_key == event_key,
+            match_model.team_number == team_number,
+            match_model.organization_id.in_(list(accessible_org_ids)),
+        )
+    )
+    existing_result = await session.execute(existing_statement)
+    played_matches = {
+        (row.match_number, row.match_level) for row in existing_result
+    }
+
+    unplayed_matches = scheduled_matches - played_matches
+    if not unplayed_matches:
+        return
+
+    queue_statement = (
+        select(PredictionQueue.match_number, PredictionQueue.match_level)
+        .where(
+            PredictionQueue.event_key == event_key,
+            PredictionQueue.organization_id == organization_id,
+        )
+    )
+    queue_result = await session.execute(queue_statement)
+    queued_matches = {
+        (row.match_number, row.match_level) for row in queue_result
+    }
+
+    matches_to_queue = unplayed_matches - queued_matches
+    if not matches_to_queue:
+        return
+
+    queue_entries = [
+        PredictionQueue(
+            event_key=event_key,
+            match_number=match_number,
+            match_level=match_level,
+            organization_id=organization_id,
+        )
+        for match_number, match_level in matches_to_queue
+    ]
+
+    session.add_all(queue_entries)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
 
 
 async def _submit_prescout_for_year(

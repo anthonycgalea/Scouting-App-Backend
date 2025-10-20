@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, Response, UploadFile, File
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlmodel import SQLModel, delete, select
+from sqlmodel import SQLModel, delete, select, update
 from datetime import datetime
 from auth.dependencies import get_current_user
 from db.database import get_session
@@ -908,6 +908,20 @@ async def createOrganizationEvent(
         event_key=command.EventKey
     )
     session.add(newOrgEvent)
+    await session.flush()
+
+    if newOrgEvent.active:
+        deactivate_statement = (
+            update(OrganizationEvent)
+            .where(
+                OrganizationEvent.organization_id == command.OrganizationId,
+                OrganizationEvent.id != newOrgEvent.id,
+                OrganizationEvent.active == True,  # noqa: E712 - SQLAlchemy boolean comparison
+            )
+            .values(active=False)
+        )
+        await session.exec(deactivate_statement)
+
     await session.commit()
     await session.refresh(newOrgEvent)
 

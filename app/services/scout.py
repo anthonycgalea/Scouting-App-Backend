@@ -1370,10 +1370,14 @@ async def create_pit_scout_record(
 
     payload.pop("timestamp", None)
 
+    payload["timestamp"] = datetime.now()
+
     try:
         typed_pit = cast(PitScout, _model_validate(pit_model, payload))
     except ValidationError as exc:
         _raise_validation_error("Invalid pit scouting data for this event", exc)
+
+    typed_pit.timestamp = datetime.now()
 
     statement = select(pit_model).where(
         pit_model.event_key == event_key,
@@ -1454,16 +1458,20 @@ async def update_pit_scout_record(
         raise HTTPException(status_code=404, detail="Pit scouting record not found for this team")
 
     stored_payload = _model_dump(stored_record)
+    payload.pop("timestamp", None)
     merged_payload = {**stored_payload, **payload}
     merged_payload["user_id"] = stored_record.user_id
     merged_payload.pop("organization_id", None)
     merged_payload["organization_id"] = stored_record.organization_id
     merged_payload["notes"] = merged_payload.get("notes") or ""
+    merged_payload["timestamp"] = datetime.now()
 
     try:
         typed_pit = cast(PitScout, _model_validate(pit_model, merged_payload))
     except ValidationError as exc:
         _raise_validation_error("Invalid pit scouting data for this event", exc)
+
+    typed_pit.timestamp = datetime.now()
 
     valid_fields = set(_get_model_field_names(pit_model))
     protected_fields = {"event_key", "team_number", "user_id", "organization_id"}
@@ -1776,11 +1784,14 @@ async def submit_scouted_match(
     )
     prepared_payload["notes"] = prepared_payload.get("notes") or ""
     prepared_payload.pop("timestamp", None)
+    prepared_payload["timestamp"] = datetime.now()
 
     try:
         typed_match = cast(MatchData, _model_validate(match_model, prepared_payload))
     except ValidationError as exc:
         _raise_validation_error("Invalid match data for this season", exc)
+
+    typed_match.timestamp = datetime.now()
 
     try:
         return await _submit_match_for_year(
@@ -1829,12 +1840,15 @@ async def submit_prescout_record(
         user_id=user_id,
     )
     prepared_payload["notes"] = prepared_payload.get("notes") or ""
-    prepared_payload.pop("timestamp", datetime.now())
+    prepared_payload.pop("timestamp", None)
+    prepared_payload["timestamp"] = datetime.now()
 
     try:
         typed_prescout = cast(MatchData, _model_validate(prescout_model, prepared_payload))
     except ValidationError as exc:
         _raise_validation_error("Invalid prescout data for this season", exc)
+
+    typed_prescout.timestamp = datetime.now()
 
     try:
         return await _submit_prescout_for_year(
@@ -1938,11 +1952,14 @@ async def submit_superscout_record(
 
     payload["notes"] = payload.get("notes") or ""
     payload.pop("timestamp", None)
+    payload["timestamp"] = datetime.now()
 
     try:
         typed_superscout = cast(SuperScoutData, _model_validate(superscout_model, payload))
     except ValidationError as exc:
         _raise_validation_error("Invalid superscout data for this season", exc)
+
+    typed_superscout.timestamp = datetime.now()
 
     statement = select(superscout_model).where(
         superscout_model.event_key == getattr(typed_superscout, "event_key"),

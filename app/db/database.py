@@ -20,7 +20,10 @@ if DATABASE_URL and "+asyncpg" not in DATABASE_URL:
     elif DATABASE_URL.startswith("postgresql://"):
         DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-engine: AsyncEngine = create_async_engine(DATABASE_URL)
+engine: AsyncEngine = create_async_engine(
+    DATABASE_URL,
+    connect_args={"statement_cache_size": 0},
+)
 
 async def init_db():
     async with engine.begin() as conn:

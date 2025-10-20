@@ -1,0 +1,50 @@
+name: Deploy FastAPI to DigitalOcean
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy_api:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install sshpass
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+
+      - name: Deploy FastAPI app to DigitalOcean
+        env:
+          DO_HOST: ${{ secrets.DO_HOST }}
+          DO_USER: ${{ secrets.DO_USER }}
+          DO_PASS: ${{ secrets.DO_PASS }}
+        run: |
+          sshpass -p "$DO_PASS" ssh -o StrictHostKeyChecking=no $DO_USER@$DO_HOST << 'EOF'
+            set -e
+            echo "🔹 Pulling latest code..."
+            cd /opt/Scouting-App-Backend
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo "🔹 Activating virtual environment..."
+            source venv/bin/activate
+
+            echo "🔹 Installing dependencies..."
+            pip install -r requirements.txt --upgrade
+
+            echo "🔹 Restarting FastAPI server..."
+            # stop any existing screen session named api (if exists)
+            screen -S api -X quit || true
+
+            # start a new detached screen running uvicorn
+            screen -dmS api bash -c '
+              cd /opt/Scouting-App-Backend &&
+              source venv/bin/activate &&
+              uvicorn main:app --app-dir app --host 127.0.0.1 --port 8000 --workers 3
+            '
+
+            echo "✅ Deployment complete."
+          EOF

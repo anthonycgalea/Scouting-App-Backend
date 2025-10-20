@@ -17,12 +17,20 @@ from routes import (
 app = FastAPI(title="Scouting App API")
 
 origins = [
-    "http://localhost:5173",
-    "http://localhost:8081",
+    #"http://localhost:5173",
+    #"http://localhost:8081",
+    "http://api.codystats.com",
+    "https://api.codystats.com",
+    "http://www.codystats.com",
+    "https://www.codystats.com",
+    "http://codystats.com",
+    "https://codystats.com",
+    
 ]
 
 app.add_middleware(
     CORSMiddleware,
+    #allow_origins=["*"],
     allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],

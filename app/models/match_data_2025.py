@@ -11,8 +11,8 @@ class Endgame2025(str, Enum):
     SHALLOW = "SHALLOW"
     DEEP = "DEEP"
 
-class MatchData2025(MatchData, table=True):
-    __tablename__ = "matchdata2025"
+class GameSpecific2025(MatchData):
+    __abstract__=True
     # Autonomous Levels
     al4c: int = Field(default=0)
     al3c: int = Field(default=0)
@@ -34,11 +34,14 @@ class MatchData2025(MatchData, table=True):
     # Endgame
     endgame: Endgame2025 = Field(default=Endgame2025.NONE)
 
+class MatchData2025(GameSpecific2025, table=True):
+    __tablename__ = "matchdata2025"
+    
 
-class Prescout2025(MatchData2025, table=True):
+class Prescout2025(GameSpecific2025, table=True):
     """Prescout table that reuses the 2025 scoring schema."""
-
     __tablename__ = "prescout2025"
+
 
 register_match_data_creation_hook(MatchData2025)
 

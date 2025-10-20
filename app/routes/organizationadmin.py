@@ -10,7 +10,7 @@ import csv
 import io
 import json
 from html import escape
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 from uuid import UUID
 
 
@@ -152,6 +152,7 @@ from models import (
     OrgEventAllianceInviteStatus,
     PickList,
     PickListRank,
+    PredictionQueue,
     PitScout2025,
     Prescout2025,
     SuperScoutData2025,
@@ -305,6 +306,57 @@ async def _get_active_org_event(
         )
 
     return org_event
+
+
+async def _enqueue_matches_for_prediction_queue(
+    session: AsyncSession,
+    *,
+    event_key: str,
+    organization_id: int,
+    matches: Iterable[Tuple[int, str]],
+) -> None:
+    """Add new matches to the prediction queue for the organization.
+
+    Existing queue entries for the provided matches are left untouched to
+    avoid duplicate jobs when the schedule is synchronized multiple times.
+    """
+
+    unique_matches: Set[Tuple[int, str]] = {
+        (int(match_number), match_level)
+        for match_number, match_level in matches
+        if match_level
+    }
+
+    if not unique_matches:
+        return
+
+    queue_statement = select(
+        PredictionQueue.match_number,
+        PredictionQueue.match_level,
+    ).where(
+        PredictionQueue.event_key == event_key,
+        PredictionQueue.organization_id == organization_id,
+    )
+    queue_result = await session.execute(queue_statement)
+    existing_matches: Set[Tuple[int, str]] = {
+        (int(match_number), match_level)
+        for match_number, match_level in queue_result
+    }
+
+    matches_to_queue = unique_matches - existing_matches
+    if not matches_to_queue:
+        return
+
+    queue_entries = [
+        PredictionQueue(
+            event_key=event_key,
+            match_number=match_number,
+            match_level=match_level,
+            organization_id=organization_id,
+        )
+        for match_number, match_level in matches_to_queue
+    ]
+    session.add_all(queue_entries)
 
 
 @router.post(
@@ -980,6 +1032,10 @@ async def get_match_schedule(
     statement = select(MatchSchedule).where(MatchSchedule.event_key == event_key)
     result = await session.exec(statement)
     existing_matches = result.all()
+    existing_match_keys = {
+        (match.match_number, match.match_level)
+        for match in existing_matches
+    }
     for match in existing_matches:
         await session.delete(match)
     await session.commit()
@@ -993,12 +1049,14 @@ async def get_match_schedule(
         match_schedule_json = response.json()
 
     # 3. Insert matches into DB
+    matches_for_queue: Set[Tuple[int, str]] = set()
     for match in match_schedule_json:
         alliances = match["alliances"]
-        if match["comp_level"] == "sf":
-            match_number = match["set_number"]
+        match_level: str = match["comp_level"]
+        if match_level == "sf":
+            match_number = int(match["set_number"])
         else:
-            match_number = match["match_number"]
+            match_number = int(match["match_number"])
 
         redteams = alliances["red"]["team_keys"]
         blueteams = alliances["blue"]["team_keys"]
@@ -1022,6 +1080,16 @@ async def get_match_schedule(
             blue3_id=blue3,
         )
         session.add(match_record)
+
+        if (match_number, match_level) not in existing_match_keys:
+            matches_for_queue.add((match_number, match_level))
+
+    await _enqueue_matches_for_prediction_queue(
+        session,
+        event_key=event_key,
+        organization_id=int(membership.organization_id),
+        matches=matches_for_queue,
+    )
 
     # 4. Commit all new matches
     await session.commit()

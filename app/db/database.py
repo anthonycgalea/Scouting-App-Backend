@@ -52,7 +52,6 @@ def _default_connect_args(url: Optional[str]) -> Dict[str, Any]:
         return {
             "statement_cache_size": 0,
             "prepared_statement_cache_size": 0,
-            "prepare_threshold": 0,
         }
 
     return {}
@@ -66,10 +65,9 @@ def create_engine_from_url(
 ) -> AsyncEngine:
     """Create an ``AsyncEngine`` with PgBouncer-safe defaults.
 
-    The returned engine always disables asyncpg's prepared statement caches and
-    lowers the ``prepare_threshold`` so that PgBouncer (operating in transaction
-    pooling mode, the configuration used by Supabase) never sees server-side
-    prepared statements.
+    The returned engine always disables asyncpg's prepared statement caches to
+    avoid ``duplicate prepared statement" errors when PgBouncer operates in
+    transaction pooling mode (the configuration used by Supabase).
     """
 
     normalized_url = _normalize_database_url(database_url)

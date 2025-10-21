@@ -5,10 +5,11 @@ from datetime import datetime
 from fastapi import Depends, Header, HTTPException
 from jose import JWTError, jwt
 from dotenv import load_dotenv
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from db.database import get_session
-from models import User
+from models import AutoAssignUserOrg, User, UserOrganization, UserRole
 
 # Load .env file
 load_dotenv()
@@ -52,15 +53,38 @@ async def get_current_user(
         db_user = await session.get(User, user_id)
         if not db_user:
             logger.info("User %s not found in database. Creating new record.", user_id)
+            now = datetime.now()
             db_user = User(
                 id=user_id,
                 email=email,
                 auth_provider="discord",
                 display_name=display_name,
-                created_at=datetime.now(),
-                updated_at=datetime.now()
+                created_at=now,
+                updated_at=now,
             )
             session.add(db_user)
+            await session.flush()
+
+            domain = None
+            if email and "@" in email:
+                domain = email.split("@", 1)[1].lower()
+
+            if domain:
+                auto_assign_result = await session.exec(
+                    select(AutoAssignUserOrg).where(AutoAssignUserOrg.domain == domain)
+                )
+                auto_assign_entry = auto_assign_result.first()
+
+                if auto_assign_entry:
+                    membership = UserOrganization(
+                        user_id=db_user.id,
+                        organization_id=auto_assign_entry.organization_id,
+                        role=UserRole.MEMBER,
+                    )
+                    session.add(membership)
+                    await session.flush()
+                    db_user.logged_in_user_org = membership.id
+
             await session.commit()
             await session.refresh(db_user)
 

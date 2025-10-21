@@ -7,9 +7,10 @@ from jose import JWTError, jwt
 from dotenv import load_dotenv
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
+from uuid import UUID
 
 from db.database import get_session
-from models import AutoAssignUserOrg, User, UserOrganization, UserRole
+from models import AutoAssignUserOrg, SiteAdmins, User, UserOrganization, UserRole
 
 # Load .env file
 load_dotenv()
@@ -105,3 +106,19 @@ async def get_current_user(
     except JWTError as exc:
         logger.exception("JWT decode error while processing authorization header")
         raise HTTPException(status_code=401, detail="Invalid token") from exc
+
+
+async def require_site_admin(
+    current_user: dict = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        user_id = UUID(current_user["id"])
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=403, detail="Site admin access required") from exc
+
+    site_admin = await session.get(SiteAdmins, user_id)
+    if not site_admin:
+        raise HTTPException(status_code=403, detail="Site admin access required")
+
+    return current_user

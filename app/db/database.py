@@ -88,7 +88,11 @@ engine: AsyncEngine = create_engine_from_url(
     pool_pre_ping=True,
 )
 
-async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
+async_session_factory = async_sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
 
 
 async def init_db() -> None:

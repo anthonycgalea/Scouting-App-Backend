@@ -19,12 +19,12 @@ load_dotenv()
 # Alembic Config
 config = context.config
 
-# Set sqlalchemy.url from .env (sync driver)
-DB_URL = os.getenv("DB_URL")
-if DB_URL and "asyncpg" in DB_URL:
-    DB_URL = DB_URL.replace("+asyncpg", "+psycopg")  # Use sync psycopg for Alembic
-    print(f"Alembic DB_URL (sync): {DB_URL}")
-config.set_main_option("sqlalchemy.url", DB_URL)
+# Ensure Alembic reuses the application's database engine configuration.
+from app.db.database import get_sync_database_url  # noqa: E402
+
+sync_database_url = get_sync_database_url()
+if sync_database_url:
+    config.set_main_option("sqlalchemy.url", sync_database_url)
 
 # Setup logging from alembic.ini
 if config.config_file_name:

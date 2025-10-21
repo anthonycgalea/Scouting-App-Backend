@@ -11,9 +11,9 @@ from typing import AsyncIterator, Iterable
 from fastapi import HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import engine, init_db
+from app.db.database import async_session_factory, engine, init_db
 from app.models import PredictionQueue
 from app.services.match_prediction import simulate_match_prediction
 
@@ -32,14 +32,11 @@ class QueuedMatch:
     match_number: int
 
 
-session_factory = async_sessionmaker(engine, expire_on_commit=False)
-
-
 @asynccontextmanager
 async def session_scope() -> AsyncIterator[AsyncSession]:
     """Provide a transactional scope around a series of operations."""
 
-    session: AsyncSession = session_factory()
+    session: AsyncSession = async_session_factory()
     try:
         yield session
     finally:

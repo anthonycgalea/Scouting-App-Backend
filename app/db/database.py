@@ -22,7 +22,10 @@ if DATABASE_URL and "+asyncpg" not in DATABASE_URL:
 
 engine: AsyncEngine = create_async_engine(
     DATABASE_URL,
-    connect_args={"statement_cache_size": 0},
+    connect_args={
+        "statement_cache_size": 0,
+        "prepared_statement_cache_size": 0,
+    },
 )
 
 async def init_db():

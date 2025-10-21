@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select, delete, SQLModel
 from typing import Optional, List, Set
-from auth.dependencies import get_current_user
+from auth.dependencies import require_site_admin
 from db.database import get_session
 from dotenv import load_dotenv
 import requests, os, httpx, asyncio, traceback, aiohttp
@@ -12,7 +12,7 @@ import requests, os, httpx, asyncio, traceback, aiohttp
 router = APIRouter(
     prefix="/admin",
     tags=["Admin"],
-    #dependencies=[Depends(verify_admin)],
+    dependencies=[Depends(require_site_admin)],
 )
 
 from models import (
@@ -43,7 +43,6 @@ class OrganizationResponse(SQLModel):
 @router.post("/organizations/create", response_model=OrganizationResponse)
 async def create_organization(
     command: CreateOrganizationCommand,
-    #user=Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
 ) -> OrganizationResponse:
     #TODO: validate website administrator

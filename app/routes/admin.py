@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select, delete, SQLModel
 from typing import Optional, List, Set
+from datetime import datetime
 from auth.dependencies import require_site_admin
 from db.database import get_session
 from dotenv import load_dotenv
@@ -24,6 +25,7 @@ from models import (
     TeamEvent,
     UserOrganization,
     UserRole,
+    User,
 )
 
 load_dotenv()
@@ -52,6 +54,38 @@ class ManageOrganizationMemberRequest(SQLModel):
 class ManageOrganizationMemberResponse(SQLModel):
     user_organization_id: int
     role: UserRole
+
+
+class AdminUserResponse(SQLModel):
+    id: UUID
+    email: str
+    auth_provider: str
+    display_name: str
+    logged_in_user_org: Optional[int] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
+@router.get("/users", response_model=List[AdminUserResponse])
+async def get_all_users(
+    session: AsyncSession = Depends(get_session),
+) -> List[AdminUserResponse]:
+    statement = select(User)
+    result = await session.exec(statement)
+    users = result.scalars().all()
+
+    return [
+        AdminUserResponse(
+            id=user.id,
+            email=user.email,
+            auth_provider=user.auth_provider,
+            display_name=user.display_name,
+            logged_in_user_org=user.logged_in_user_org,
+            created_at=user.created_at,
+            updated_at=user.updated_at,
+        )
+        for user in users
+    ]
 
 
 @router.post("/organizations/create", response_model=OrganizationResponse)

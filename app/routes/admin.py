@@ -1,4 +1,5 @@
 from http.client import HTTPException
+from uuid import UUID
 from fastapi import APIRouter, Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select, delete, SQLModel
@@ -20,7 +21,9 @@ from models import (
     OrganizationFeatureSettings,
     TeamRecord,
     FRCEvent,
-    TeamEvent
+    TeamEvent,
+    UserOrganization,
+    UserRole,
 )
 
 load_dotenv()
@@ -39,6 +42,17 @@ class OrganizationResponse(SQLModel):
     id: int
     name: str
     team_number: Optional[int]
+
+
+class ManageOrganizationMemberRequest(SQLModel):
+    user_id: UUID
+    organization_id: int
+
+
+class ManageOrganizationMemberResponse(SQLModel):
+    user_organization_id: int
+    role: UserRole
+
 
 @router.post("/organizations/create", response_model=OrganizationResponse)
 async def create_organization(
@@ -120,7 +134,44 @@ async def update_team_list(session: AsyncSession = Depends(get_session)) -> dict
         "added": len(teams_to_add),
         "updated": updates,
         "total_processed": len(all_teams),
-    }   
+    }
+
+
+@router.post(
+    "/organizations/members",
+    response_model=ManageOrganizationMemberResponse,
+)
+async def add_or_promote_organization_member(
+    request: ManageOrganizationMemberRequest,
+    session: AsyncSession = Depends(get_session),
+) -> ManageOrganizationMemberResponse:
+    statement = select(UserOrganization).where(
+        UserOrganization.user_id == request.user_id,
+        UserOrganization.organization_id == request.organization_id,
+    )
+    result = await session.exec(statement)
+    membership = result.first()
+
+    if membership is None:
+        membership = UserOrganization(
+            user_id=request.user_id,
+            organization_id=request.organization_id,
+            role=UserRole.ADMIN,
+        )
+        session.add(membership)
+        await session.commit()
+        await session.refresh(membership)
+    else:
+        if membership.role != UserRole.ADMIN:
+            membership.role = UserRole.ADMIN
+            session.add(membership)
+            await session.commit()
+        await session.refresh(membership)
+
+    return ManageOrganizationMemberResponse(
+        user_organization_id=membership.id,
+        role=membership.role,
+    )
 
 async def fetch_event_teams(event_key: str, headers: dict):
     async with semaphore:

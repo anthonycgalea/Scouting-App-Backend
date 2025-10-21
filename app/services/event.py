@@ -982,6 +982,8 @@ async def update_event_rankings_from_tba(
         delete(EventRankings).where(EventRankings.event_key == event_key)
     )
 
+    new_rankings: List[EventRankings] = []
+
     for ranking in rankings:
         team_number = _parse_team_number(ranking.get("team_key"))
         extra_stats = ranking.get("extra_stats") or []
@@ -991,7 +993,7 @@ async def update_event_rankings_from_tba(
         tiebreaker_1 = _coerce_float(sort_orders[1]) if len(sort_orders) > 1 else 0.0
         tiebreaker_2 = _coerce_float(sort_orders[2]) if len(sort_orders) > 2 else 0.0
 
-        session.add(
+        new_rankings.append(
             EventRankings(
                 event_key=event_key,
                 rank=_coerce_int(ranking.get("rank")),
@@ -1002,6 +1004,9 @@ async def update_event_rankings_from_tba(
                 ranking_tiebreaker_2=tiebreaker_2,
             )
         )
+
+    if new_rankings:
+        session.add_all(new_rankings)
 
     await session.commit()
 
@@ -1047,17 +1052,19 @@ async def update_statbotics_data_for_event(
         if not isinstance(breakdown, dict):
             breakdown = {}
 
-        statbotics_record = StatboticsData(
-            event_key=eventCode,
-            team_number=int(team_number),
-            total_points=_coerce_float(breakdown.get("total_points")),
-            auto_points=_coerce_float(breakdown.get("auto_points")),
-            teleop_points=_coerce_float(breakdown.get("teleop_points")),
-            endgame_points=_coerce_float(breakdown.get("endgame_points")),
+        records.append(
+            StatboticsData(
+                event_key=eventCode,
+                team_number=int(team_number),
+                total_points=_coerce_float(breakdown.get("total_points")),
+                auto_points=_coerce_float(breakdown.get("auto_points")),
+                teleop_points=_coerce_float(breakdown.get("teleop_points")),
+                endgame_points=_coerce_float(breakdown.get("endgame_points")),
+            )
         )
 
-        session.add(statbotics_record)
-        records.append(statbotics_record)
+    if records:
+        session.add_all(records)
 
     await session.commit()
 

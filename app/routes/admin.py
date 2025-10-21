@@ -72,7 +72,7 @@ async def get_all_users(
 ) -> List[AdminUserResponse]:
     statement = select(User)
     result = await session.exec(statement)
-    users = result.scalars().all()
+    users = result.all()
 
     return [
         AdminUserResponse(

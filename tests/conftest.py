@@ -4,7 +4,6 @@ import os
 import pytest
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -12,7 +11,9 @@ os.environ.setdefault("DB_URL", "sqlite+aiosqlite://")
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
-async_engine = create_async_engine(
+from app.db.database import create_engine_from_url
+
+async_engine = create_engine_from_url(
     TEST_DATABASE_URL,
     connect_args={"check_same_thread": False},
     poolclass=StaticPool,

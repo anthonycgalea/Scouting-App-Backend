@@ -8,7 +8,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from auth.dependencies import get_current_user
 from db.database import get_session
-from models import Organization, UserOrganization, User
+from models import Organization, SiteAdmins, UserOrganization, User
 from models.user_organization import UserRole
 from services.event import get_active_event_key_for_user
 
@@ -171,8 +171,11 @@ async def get_my_role(
     if membership is None:
         raise HTTPException(status_code=404, detail="Membership not found")
 
+    site_admin = await session.get(SiteAdmins, user_id)
+
     return {
-        "role": membership.role.value
+        "role": membership.role.value,
+        "isSiteAdmin": site_admin is not None,
     }
 
 

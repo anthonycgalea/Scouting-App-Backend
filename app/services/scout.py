@@ -1736,8 +1736,20 @@ async def batch_submit_match(
             raise
 
 async def batch_update_match(session: AsyncSession, matches: List[MatchData], user: User):
+    if not matches:
+        return
+
     for match in matches:
         await update_scouted_match(session, match, user)
+
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Match data conflicts with an existing submission for this match",
+        ) from exc
 
 async def update_scouted_match(session: AsyncSession, match: MatchData, user: User):
     (

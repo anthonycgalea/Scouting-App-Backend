@@ -16,6 +16,10 @@ from services.match_prediction import (
     get_match_prediction_for_user_organization,
     simulate_match_prediction,
 )
+from services.team_media import (
+    EventTeamImagesResponse,
+    list_event_team_images,
+)
 
 @router.get("/match/{matchLevel}/{matchNumber}", tags=["Scout"])
 async def get_single_match(
@@ -121,6 +125,15 @@ async def get_event_info(
 ) -> FRCEvent:
     event_code = await get_active_event_key_for_user(session, user)
     return await get_event_or_404(session, event_code)
+
+
+@router.get("/images", response_model=list[EventTeamImagesResponse])
+async def list_event_images_endpoint(
+    session: AsyncSession = Depends(get_session),
+    user=Depends(get_current_user),
+):
+    return await list_event_team_images(session, user)
+
 
 @router.get("s/{year}")
 async def get_event_list(year: int, session: AsyncSession = Depends(get_session)) -> List[EventResponse]:

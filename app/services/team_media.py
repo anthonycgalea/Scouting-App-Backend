@@ -10,7 +10,7 @@ from typing import Iterable, Optional
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, UploadFile, status
-from pydantic import ConfigDict
+from pydantic import BaseModel, ConfigDict
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -42,6 +42,13 @@ class RobotEventImageLinkResponse(SQLModel):
     image_url: str
     description: Optional[str]
     uploaded_at: datetime
+
+
+class EventTeamImagesResponse(BaseModel):
+    """Response DTO for grouped team robot images at an event."""
+
+    teamNumber: int
+    images: list[str]
 
 
 async def _ensure_team_and_event(session: AsyncSession, team_number: int, event_key: str) -> None:
@@ -170,3 +177,35 @@ async def list_team_images(
     result = await session.execute(statement)
     records = result.scalars().all()
     return [RobotEventImageLinkResponse.model_validate(record) for record in records]
+
+
+async def list_event_team_images(
+    session: AsyncSession,
+    user: dict,
+) -> list[EventTeamImagesResponse]:
+    """Return robot images for every team at the user's active event."""
+
+    event_key = await get_active_event_key_for_user(session, user)
+
+    statement = (
+        select(
+            RobotEventImageLink.team_number,
+            RobotEventImageLink.image_url,
+        )
+        .where(RobotEventImageLink.event_key == event_key)
+        .order_by(
+            RobotEventImageLink.team_number.asc(),
+            RobotEventImageLink.uploaded_at.desc(),
+        )
+    )
+
+    result = await session.execute(statement)
+
+    grouped_images: dict[int, list[str]] = {}
+    for team_number, image_url in result.all():
+        grouped_images.setdefault(team_number, []).append(image_url)
+
+    return [
+        EventTeamImagesResponse(teamNumber=team_number, images=images)
+        for team_number, images in grouped_images.items()
+    ]

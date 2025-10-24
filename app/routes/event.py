@@ -87,6 +87,14 @@ async def get_tba_match_data(
 ):
     return await fetch_tba_match_data(session, user, request)
 
+
+@router.get("/tbaMatchData", response_model=List[Dict[str, Any]])
+async def list_tba_match_data(
+    session: AsyncSession = Depends(get_session),
+    user=Depends(get_current_user),
+):
+    return await list_tba_match_data_for_event(session, user)
+
 @router.get("/organizations")
 async def get_event_organizations(
     session: AsyncSession = Depends(get_session),

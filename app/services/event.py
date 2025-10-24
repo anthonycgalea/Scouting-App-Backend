@@ -340,6 +340,27 @@ async def get_tba_match_data_for_match(
     return record.model_dump()
 
 
+async def list_tba_match_data_for_event(
+    session: AsyncSession, user: dict
+) -> List[Dict[str, Any]]:
+    """Return all persisted TBA match data entries for the user's active event."""
+
+    event_key = await get_active_event_key_for_user(session, user)
+    event = await get_event_or_404(session, event_key)
+
+    tba_model = TBA_MATCH_DATA_MODELS_BY_YEAR.get(event.year)
+    if tba_model is None:
+        raise HTTPException(
+            status_code=404, detail="TBA match data is not available for this event"
+        )
+
+    statement = select(tba_model).where(tba_model.event_key == event_key)
+    result = await session.execute(statement)
+    records = result.scalars().all()
+
+    return [record.model_dump() for record in records]
+
+
 def _parse_team_numbers(team_keys: Sequence[Any]) -> List[int]:
     numbers: List[int] = []
     for key in team_keys:

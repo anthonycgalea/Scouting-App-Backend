@@ -34,7 +34,7 @@ jobs:
             source venv/bin/activate
 
             echo "🔹 Installing dependencies..."
-            pip install -r requirements.txt --upgrade
+            pip install -r requirements.txt
 
             echo "🔹 Restarting FastAPI server in screen session..."
             if [ -z "$DO_SCREEN_ID" ]; then

@@ -22,7 +22,7 @@ jobs:
           DO_USER: ${{ secrets.DO_USER }}
           DO_PASS: ${{ secrets.DO_PASS }}
         run: |
-          sshpass -p "$DO_PASS" ssh -o StrictHostKeyChecking=no $DO_USER@$DO_HOST <<'REMOTE'
+          sshpass -p "$DO_PASS" ssh -o StrictHostKeyChecking=no $DO_USER@$DO_HOST << 'EOF'
             set -e
             echo "🔹 Pulling latest code..."
             cd /opt/Scouting-App-Backend
@@ -35,23 +35,16 @@ jobs:
             echo "🔹 Installing dependencies..."
             pip install -r requirements.txt --upgrade
 
-            echo "🔹 Preparing FastAPI server restart..."
-            if screen -list | grep -q '\.api'; then
-              echo "   🔸 Existing 'api' screen session detected. Stopping it..."
-              screen -S api -X quit || true
-              sleep 2
-            else
-              echo "   🔸 No existing 'api' screen session found."
-            fi
+            echo "🔹 Restarting FastAPI server..."
+            # stop any existing screen session named api (if exists)
+            screen -S api -X quit || true
 
-            echo "🔹 Starting new 'api' screen session..."
+            # start a new detached screen running uvicorn
             screen -dmS api bash -c '
-              set -e
-              cd /opt/Scouting-App-Backend
-              source venv/bin/activate
-              echo "   🔸 Launching uvicorn..."
-              exec uvicorn main:app --app-dir app --host 127.0.0.1 --port 8000 --workers 3
+              cd /opt/Scouting-App-Backend &&
+              source venv/bin/activate &&
+              uvicorn main:app --app-dir app --host 127.0.0.1 --port 8000 --workers 3
             '
 
             echo "✅ Deployment complete."
-REMOTE
+          EOF

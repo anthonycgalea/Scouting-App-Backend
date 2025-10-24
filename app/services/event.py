@@ -392,7 +392,14 @@ async def _persist_event_tba_matches(
             continue
 
         alliances = match.get("alliances") or {}
-        breakdown = match.get("score_breakdown") or {}
+        breakdown = match.get("score_breakdown")
+
+        if (
+            not breakdown
+            or not isinstance(breakdown, dict)
+            or not all(breakdown.get(color) for color in ("red", "blue"))
+        ):
+            continue
 
         for color_key, alliance_enum in (("red", Alliance.RED), ("blue", Alliance.BLUE)):
             alliance_info = alliances.get(color_key) or {}

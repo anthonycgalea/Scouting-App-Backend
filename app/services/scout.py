@@ -1737,7 +1737,7 @@ async def batch_submit_match(
 
 async def batch_update_match(session: AsyncSession, matches: List[MatchData], user: User):
     for match in matches:
-        update_scouted_match(session, match, user)
+        await update_scouted_match(session, match, user)
 
 async def update_scouted_match(session: AsyncSession, match: MatchData, user: User):
     (

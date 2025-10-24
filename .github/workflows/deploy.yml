@@ -21,6 +21,7 @@ jobs:
           DO_HOST: ${{ secrets.DO_HOST }}
           DO_USER: ${{ secrets.DO_USER }}
           DO_PASS: ${{ secrets.DO_PASS }}
+          DO_SCREEN_ID: ${{ secrets.DO_SCREEN_ID }}
         run: |
           sshpass -p "$DO_PASS" ssh -o StrictHostKeyChecking=no $DO_USER@$DO_HOST << 'EOF'
             set -e
@@ -35,19 +36,27 @@ jobs:
             echo "🔹 Installing dependencies..."
             pip install -r requirements.txt --upgrade
 
-            echo "🔹 Restarting FastAPI server..."
-            # Kill any existing screen session
-            if screen -list | grep -q "api"; then
-              screen -S api -X quit || true
-              sleep 10
+            echo "🔹 Restarting FastAPI server in screen session..."
+            if [ -z "$DO_SCREEN_ID" ]; then
+              echo "❌ DO_SCREEN_ID secret is not configured."
+              exit 1
             fi
 
-            # Start a new detached screen
-            screen -dmS api bash -c '
-              cd /opt/Scouting-App-Backend
-              source venv/bin/activate
-              exec uvicorn main:app --app-dir app --host 127.0.0.1 --port 8000 --workers 3
-            '
+            SCREEN_ID="$DO_SCREEN_ID"
+            if screen -list | grep -q "$SCREEN_ID"; then
+              echo "  ➤ Stopping running process inside screen $SCREEN_ID"
+              screen -S "$SCREEN_ID" -p 0 -X stuff $'\003'
+              sleep 5
+            else
+              echo "  ➤ Screen $SCREEN_ID not found, creating it"
+              screen -dmS "$SCREEN_ID"
+              sleep 2
+            fi
+
+            echo "  ➤ Starting FastAPI server within screen $SCREEN_ID"
+            screen -S "$SCREEN_ID" -p 0 -X stuff $'cd /opt/Scouting-App-Backend\n'
+            screen -S "$SCREEN_ID" -p 0 -X stuff $'source venv/bin/activate\n'
+            screen -S "$SCREEN_ID" -p 0 -X stuff $'uvicorn main:app --app-dir app --host 127.0.0.1 --port 8000 --workers 3\n'
 
             echo "✅ Deployment complete."
           EOF

@@ -16,7 +16,11 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from models import RobotEventImageLink
 from services.aws import get_s3_client, get_team_images_bucket
-from services.event import get_active_event_key_for_user, get_event_or_404
+from services.event import (
+    get_active_event_key_for_user,
+    get_event_or_404,
+    get_match_or_404,
+)
 from services.team import get_team_or_404
 from sqlmodel import SQLModel
 
@@ -208,4 +212,63 @@ async def list_event_team_images(
     return [
         EventTeamImagesResponse(teamNumber=team_number, images=images)
         for team_number, images in grouped_images.items()
+    ]
+
+
+async def list_match_team_images(
+    session: AsyncSession,
+    user: dict,
+    match_level: str,
+    match_number: int,
+) -> list[EventTeamImagesResponse]:
+    """Return robot images for every team competing in a specific match."""
+
+    event_key = await get_active_event_key_for_user(session, user)
+
+    match = await get_match_or_404(session, event_key, match_number, match_level)
+
+    team_order: list[int] = []
+    seen: set[int] = set()
+    for team_number in (
+        match.red1_id,
+        match.red2_id,
+        match.red3_id,
+        match.blue1_id,
+        match.blue2_id,
+        match.blue3_id,
+    ):
+        if team_number not in seen:
+            seen.add(team_number)
+            team_order.append(team_number)
+
+    if not team_order:
+        return []
+
+    statement = (
+        select(
+            RobotEventImageLink.team_number,
+            RobotEventImageLink.image_url,
+        )
+        .where(
+            RobotEventImageLink.event_key == event_key,
+            RobotEventImageLink.team_number.in_(team_order),
+        )
+        .order_by(
+            RobotEventImageLink.team_number.asc(),
+            RobotEventImageLink.uploaded_at.desc(),
+        )
+    )
+
+    result = await session.execute(statement)
+
+    grouped_images: dict[int, list[str]] = {team_number: [] for team_number in team_order}
+    for team_number, image_url in result.all():
+        grouped_images.setdefault(team_number, []).append(image_url)
+
+    return [
+        EventTeamImagesResponse(
+            teamNumber=team_number,
+            images=grouped_images.get(team_number, []),
+        )
+        for team_number in team_order
     ]

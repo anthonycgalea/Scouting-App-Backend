@@ -21,6 +21,7 @@ from models import (
     Organization,
     OrganizationEvent,
     RobotEventImageLink,
+    MatchSchedule,
     TeamRecord,
     User,
     UserOrganization,
@@ -94,6 +95,24 @@ async def _prepare_event_images_data():
         session.add(org_event)
         await session.commit()
 
+        match = MatchSchedule(
+            event_key=event.event_key,
+            match_number=1,
+            match_level="qm",
+            red1_id=team_one.team_number,
+            red2_id=team_two.team_number,
+            red3_id=team_without_images.team_number,
+            blue1_id=4444,
+            blue2_id=5555,
+            blue3_id=6666,
+        )
+        session.add(match)
+
+        for extra_team in (4444, 5555, 6666):
+            session.add(TeamRecord(teamNumber=extra_team, teamName=f"Team {extra_team}"))
+
+        await session.commit()
+
         image_time = datetime.utcnow()
         images = [
             RobotEventImageLink(
@@ -130,6 +149,8 @@ async def _prepare_event_images_data():
             "team_one": team_one.team_number,
             "team_two": team_two.team_number,
             "team_without_images": team_without_images.team_number,
+            "match_level": match.match_level,
+            "match_number": match.match_number,
         }
 
 
@@ -190,3 +211,38 @@ def test_event_images_endpoint_returns_grouped_links(event_images_client):
     assert "https://cdn.example.com/team1111-other-event.jpg" not in {
         image for entry in payload for image in entry["images"]
     }
+
+
+def test_match_images_endpoint_includes_teams_without_images(event_images_client):
+    client, data = event_images_client
+
+    response = client.get(
+        f"/event/match/{data['match_level']}/{data['match_number']}/images"
+    )
+
+    assert response.status_code == 200
+
+    payload = response.json()
+
+    expected_order = [
+        data["team_one"],
+        data["team_two"],
+        data["team_without_images"],
+        4444,
+        5555,
+        6666,
+    ]
+
+    assert [entry["teamNumber"] for entry in payload] == expected_order
+
+    images_by_team = {entry["teamNumber"]: entry["images"] for entry in payload}
+
+    assert images_by_team[data["team_one"]] == [
+        "https://cdn.example.com/team1111-latest.jpg",
+        "https://cdn.example.com/team1111-older.jpg",
+    ]
+    assert images_by_team[data["team_two"]] == ["https://cdn.example.com/team2222.jpg"]
+    assert images_by_team[data["team_without_images"]] == []
+    assert images_by_team[4444] == []
+    assert images_by_team[5555] == []
+    assert images_by_team[6666] == []

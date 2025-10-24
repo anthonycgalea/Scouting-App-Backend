@@ -340,6 +340,134 @@ async def get_tba_match_data_for_match(
     return record.model_dump()
 
 
+def _parse_team_numbers(team_keys: Sequence[Any]) -> List[int]:
+    numbers: List[int] = []
+    for key in team_keys:
+        if key is None:
+            continue
+
+        if isinstance(key, int):
+            numbers.append(key)
+            continue
+
+        text = str(key).strip()
+        if not text:
+            continue
+
+        if text.startswith("frc"):
+            text = text[3:]
+
+        try:
+            numbers.append(int(text))
+        except ValueError:
+            continue
+
+    return numbers
+
+
+async def _persist_event_tba_matches(
+    session: AsyncSession,
+    event_key: str,
+    event_year: int,
+    matches: Sequence[Dict[str, Any]],
+) -> None:
+    tba_model = TBA_MATCH_DATA_MODELS_BY_YEAR.get(event_year)
+    if tba_model is None:
+        raise HTTPException(
+            status_code=404,
+            detail="TBA match data is not available for this event",
+        )
+
+    for match in matches:
+        match_level = str(match.get("comp_level") or "").strip()
+        if not match_level:
+            continue
+
+        if match_level == "sf":
+            match_number = int(match.get("set_number") or 0)
+        else:
+            match_number = int(match.get("match_number") or 0)
+
+        if match_number <= 0:
+            continue
+
+        alliances = match.get("alliances") or {}
+        breakdown = match.get("score_breakdown") or {}
+
+        for color_key, alliance_enum in (("red", Alliance.RED), ("blue", Alliance.BLUE)):
+            alliance_info = alliances.get(color_key) or {}
+            team_keys = alliance_info.get("team_keys") or []
+            team_numbers = _parse_team_numbers(team_keys)
+
+            parsed_breakdown = _parse_tba_breakdown(
+                event_year,
+                breakdown.get(color_key),
+                team_numbers,
+            )
+
+            statement = select(tba_model).where(
+                tba_model.event_key == event_key,
+                tba_model.match_number == match_number,
+                tba_model.match_level == match_level,
+                tba_model.alliance == alliance_enum,
+            )
+            result = await session.execute(statement)
+            record = result.scalars().first()
+
+            if record is None:
+                record = tba_model(
+                    event_key=event_key,
+                    match_number=match_number,
+                    match_level=match_level,
+                    alliance=alliance_enum,
+                )
+
+            for field_name, value in parsed_breakdown.items():
+                setattr(record, field_name, value)
+
+            session.add(record)
+
+    await session.commit()
+
+
+async def fetch_tba_match_data(
+    session: AsyncSession,
+    user: dict,
+    request: Optional[TBAMatchDataRequest],
+) -> Any:
+    if request is not None:
+        return await get_tba_match_data_for_match(session, user, request)
+
+    event_key = await get_active_event_key_for_user(session, user)
+    event = await get_event_or_404(session, event_key)
+
+    if not TBA_API_KEY:
+        raise HTTPException(status_code=500, detail="TBA API key is not configured")
+
+    matches_url = f"{TBA_API_ENDPOINT}/event/{event_key}/matches"
+    headers = {"X-TBA-Auth-Key": TBA_API_KEY, "accept": "application/json"}
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(matches_url, headers=headers)
+
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to retrieve match data from The Blue Alliance",
+        )
+
+    payload = response.json()
+    if not isinstance(payload, list):
+        raise HTTPException(
+            status_code=502,
+            detail="Invalid match payload from The Blue Alliance",
+        )
+
+    await _persist_event_tba_matches(session, event_key, event.year, payload)
+
+    return payload
+
+
 PHASE_METRIC_KEYS: Tuple[str, ...] = (
     "level4",
     "level3",

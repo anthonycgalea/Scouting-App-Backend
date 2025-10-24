@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel.ext.asyncio.session import AsyncSession
 from auth.dependencies import get_current_user
 from db.database import get_session
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Union
 
 from models import Organization, FRCEvent
 
@@ -76,13 +76,16 @@ async def get_match_schedule(
     return await get_match_schedule_or_404(session, event_code)
 
 
-@router.post("/tbaMatchData", response_model=Dict[str, Any])
+@router.post(
+    "/tbaMatchData",
+    response_model=Union[Dict[str, Any], List[Dict[str, Any]]],
+)
 async def get_tba_match_data(
-    request: TBAMatchDataRequest,
+    request: Optional[TBAMatchDataRequest] = None,
     session: AsyncSession = Depends(get_session),
     user=Depends(get_current_user),
 ):
-    return await get_tba_match_data_for_match(session, user, request)
+    return await fetch_tba_match_data(session, user, request)
 
 @router.get("/organizations")
 async def get_event_organizations(

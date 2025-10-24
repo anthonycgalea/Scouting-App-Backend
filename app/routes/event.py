@@ -19,6 +19,7 @@ from services.match_prediction import (
 from services.team_media import (
     EventTeamImagesResponse,
     list_event_team_images,
+    list_match_team_images,
 )
 
 @router.get("/match/{matchLevel}/{matchNumber}", tags=["Scout"])
@@ -133,6 +134,19 @@ async def list_event_images_endpoint(
     user=Depends(get_current_user),
 ):
     return await list_event_team_images(session, user)
+
+
+@router.get(
+    "/match/{matchLevel}/{matchNumber}/images",
+    response_model=list[EventTeamImagesResponse],
+)
+async def list_match_images_endpoint(
+    matchLevel: str,
+    matchNumber: int,
+    session: AsyncSession = Depends(get_session),
+    user=Depends(get_current_user),
+):
+    return await list_match_team_images(session, user, matchLevel, matchNumber)
 
 
 @router.get("s/{year}")

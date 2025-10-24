@@ -56,7 +56,7 @@ jobs:
             echo "  ➤ Starting FastAPI server within screen $SCREEN_ID"
             screen -S "$SCREEN_ID" -p 0 -X stuff $'cd /opt/Scouting-App-Backend\n'
             screen -S "$SCREEN_ID" -p 0 -X stuff $'source venv/bin/activate\n'
-            screen -S "$SCREEN_ID" -p 0 -X stuff $'uvicorn main:app --app-dir app --host 127.0.0.1 --port 8000 --workers 3\n'
+            screen -S "$SCREEN_ID" -p 0 -X stuff $'uvicorn main:app --app-dir app --host 127.0.0.1 --port 8000 --workers 2\n'
 
             echo "✅ Deployment complete."
           EOF

@@ -212,18 +212,22 @@ async def get_current_organization(
     membership_result = await session.exec(membership_statement)
     membership = membership_result.first()
 
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Membership not found")
+
     organization_statement = select(Organization).where(
         Organization.id == membership.organization_id
     )
     organization_result = await session.exec(organization_statement)
     organization: Organization = organization_result.first()
 
-    if membership is None:
-        raise HTTPException(status_code=404, detail="Membership not found")
+    if organization is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
 
     return {
         "organization_id": organization.id,
-        "organization_name": organization.name
+        "organization_name": organization.name,
+        "team_number": organization.team_number,
     }
 
 

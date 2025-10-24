@@ -36,14 +36,17 @@ jobs:
             pip install -r requirements.txt --upgrade
 
             echo "🔹 Restarting FastAPI server..."
-            # stop any existing screen session named api (if exists)
-            screen -S api -X quit || true
+            # Kill any existing screen session
+            if screen -list | grep -q "api"; then
+              screen -S api -X quit || true
+              sleep 10
+            fi
 
-            # start a new detached screen running uvicorn
+            # Start a new detached screen
             screen -dmS api bash -c '
-              cd /opt/Scouting-App-Backend &&
-              source venv/bin/activate &&
-              uvicorn main:app --app-dir app --host 127.0.0.1 --port 8000 --workers 3
+              cd /opt/Scouting-App-Backend
+              source venv/bin/activate
+              exec uvicorn main:app --app-dir app --host 127.0.0.1 --port 8000 --workers 3
             '
 
             echo "✅ Deployment complete."

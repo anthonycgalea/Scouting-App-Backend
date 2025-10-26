@@ -4,11 +4,12 @@ from fastapi import APIRouter, Depends, Query
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from db.database import get_session
-from models import Season, TeamEvent, TeamRecord
+from models import Season, TeamRecord
 from pydantic import BaseModel
 from services.event import (
     EventResponse,
     MatchScheduleResponse,
+    TeamEventResponse,
     get_event_list_or_404,
     get_event_teams_or_404,
     get_match_schedule_or_404,
@@ -67,8 +68,8 @@ async def get_public_seasons(
     return await get_seasons(session)
 
 
-@router.get("/event/teams/{eventCode}", response_model=List[TeamEvent])
+@router.get("/event/teams/{eventCode}", response_model=List[TeamEventResponse])
 async def get_public_event_teams(
     eventCode: str, session: AsyncSession = Depends(get_session)
-) -> List[TeamEvent]:
+) -> List[TeamEventResponse]:
     return await get_event_teams_or_404(session, eventCode)

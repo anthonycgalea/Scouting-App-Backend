@@ -145,6 +145,12 @@ class EventRankingResponse(SQLModel):
     ranking_tiebreaker_2: float
 
 
+class TeamEventResponse(SQLModel):
+    event_key: str
+    team_number: int
+    team_name: Optional[str] = None
+
+
 class EventResponse(SQLModel):
     event_key: str
     event_name: str
@@ -259,17 +265,24 @@ async def get_match_schedule_or_404(session: AsyncSession, eventCode: str) -> Li
     return matches
 
 
-async def get_event_teams_or_404(session: AsyncSession, eventCode: str) -> List[TeamEvent]:
+async def get_event_teams_or_404(
+    session: AsyncSession, eventCode: str
+) -> List[TeamEventResponse]:
     statement = (
-        select(TeamEvent)
+        select(
+            TeamEvent.event_key,
+            TeamEvent.team_number,
+            TeamRecord.team_name,
+        )
+        .join(TeamRecord, TeamRecord.team_number == TeamEvent.team_number, isouter=True)
         .where(TeamEvent.event_key == eventCode)
         .order_by(TeamEvent.team_number)
     )
     result = await session.execute(statement)
-    teams = result.scalars().all()
+    teams = result.mappings().all()
     if not teams:
         raise HTTPException(status_code=404, detail="No teams found for this event")
-    return teams
+    return [TeamEventResponse(**team) for team in teams]
 
 
 async def get_match_data_for_event_or_404(

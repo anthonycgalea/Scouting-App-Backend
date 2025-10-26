@@ -26,6 +26,7 @@
         "--port", "8000"        // 👈 you can change this if needed
       ],
       "jinja": true
-    }
+    },
+     {"name":"Python Debugger: Match Predictions","type":"debugpy","request":"launch","module":"scripts.match_prediction_daemon"}
   ]
 }

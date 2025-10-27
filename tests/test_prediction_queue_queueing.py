@@ -31,6 +31,7 @@ from sqlmodel import select
 from app.models import (
     FRCEvent,
     MatchData2025,
+    MatchPredictions2025,
     MatchSchedule,
     Organization,
     OrganizationEvent,
@@ -99,6 +100,137 @@ def test_enqueue_matches_for_prediction_queue_adds_new_matches(setup_database):
                 for row in result.scalars().all()
             }
             assert queued_matches == {(1, "qm"), (2, "qm"), (3, "qm")}
+
+    asyncio.run(_run_test())
+
+
+def test_match_sync_enqueues_missing_predictions(setup_database):
+    async def _run_test() -> None:
+        async with AsyncSessionLocal() as session:
+            season = Season(id=9512, year=2025, name="Sync Season")
+            event = FRCEvent(
+                event_key="2025sync",
+                event_name="Sync Event",
+                short_name="Sync",
+                year=2025,
+                week=1,
+            )
+            organization = Organization(name="Sync Org", team_number=7890)
+            user_id = uuid4()
+            now = datetime.utcnow()
+            user = User(
+                id=user_id,
+                email="sync@example.com",
+                auth_provider="discord",
+                display_name="Sync User",
+                logged_in_user_org=None,
+                created_at=now,
+                updated_at=now,
+            )
+
+            session.add_all([season, event, organization, user])
+            await session.commit()
+            await session.refresh(organization)
+
+            membership = UserOrganization(
+                user_id=user_id,
+                organization_id=organization.id,
+                role=UserRole.ADMIN,
+            )
+            session.add(membership)
+            await session.commit()
+            await session.refresh(membership)
+
+            organization_event = OrganizationEvent(
+                organization_id=organization.id,
+                event_key=event.event_key,
+                active=True,
+            )
+            session.add(organization_event)
+            await session.commit()
+
+            prediction = MatchPredictions2025(
+                season=season.id,
+                event_key=event.event_key,
+                match_number=1,
+                match_level="qm",
+                organization_id=organization.id,
+            )
+            session.add(prediction)
+            await session.commit()
+
+            schedule_payload = [
+                {
+                    "comp_level": "qm",
+                    "match_number": 1,
+                    "alliances": {
+                        "red": {
+                            "team_keys": ["frc7890", "frc1111", "frc2222"],
+                        },
+                        "blue": {
+                            "team_keys": ["frc3333", "frc4444", "frc5555"],
+                        },
+                    },
+                },
+                {
+                    "comp_level": "qm",
+                    "match_number": 2,
+                    "alliances": {
+                        "red": {
+                            "team_keys": ["frc7890", "frc1111", "frc2222"],
+                        },
+                        "blue": {
+                            "team_keys": ["frc3333", "frc4444", "frc5555"],
+                        },
+                    },
+                },
+            ]
+
+            class _MockResponse:
+                def json(self):
+                    return schedule_payload
+
+            class _MockAsyncClient:
+                def __init__(self, *args, **kwargs):
+                    pass
+
+                async def __aenter__(self):
+                    return self
+
+                async def __aexit__(self, exc_type, exc, tb):
+                    return False
+
+                async def get(self, *args, **kwargs):
+                    return _MockResponse()
+
+            original_client = organizationadmin_module.httpx.AsyncClient
+            organizationadmin_module.httpx.AsyncClient = _MockAsyncClient
+
+            try:
+                user_payload = {"id": str(user_id), "user_org": membership.id}
+                response = await organizationadmin_module.get_match_schedule(
+                    session=session,
+                    user=user_payload,
+                )
+            finally:
+                organizationadmin_module.httpx.AsyncClient = original_client
+
+            assert response == {
+                "status": "success",
+                "event": event.event_key,
+                "matches_inserted": len(schedule_payload),
+            }
+
+            result = await session.execute(
+                select(PredictionQueue).where(
+                    PredictionQueue.event_key == event.event_key,
+                    PredictionQueue.organization_id == organization.id,
+                )
+            )
+            queued_matches = {
+                (row.match_number, row.match_level) for row in result.scalars().all()
+            }
+            assert queued_matches == {(2, "qm")}
 
     asyncio.run(_run_test())
 

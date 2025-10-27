@@ -170,6 +170,7 @@ from app.services.event import (
     require_lead_or_admin_membership,
     serialize_match_data_for_export,
 )
+from app.services.match_prediction import MATCH_PREDICTION_MODELS_BY_YEAR
 
 class CreateOrgEventCommand(SQLModel):
     OrganizationId: int
@@ -357,6 +358,61 @@ async def _enqueue_matches_for_prediction_queue(
         for match_number, match_level in matches_to_queue
     ]
     session.add_all(queue_entries)
+
+
+async def _queue_matches_missing_predictions(
+    session: AsyncSession,
+    *,
+    event_key: str,
+    organization_id: int,
+) -> bool:
+    """Enqueue scheduled matches that lack predictions for the organization."""
+
+    event = await session.get(FRCEvent, event_key)
+    if event is None:
+        return False
+
+    schedule_statement = select(
+        MatchSchedule.match_number,
+        MatchSchedule.match_level,
+    ).where(MatchSchedule.event_key == event_key)
+    schedule_result = await session.execute(schedule_statement)
+    scheduled_matches: Set[Tuple[int, str]] = {
+        (int(match_number), match_level)
+        for match_number, match_level in schedule_result
+    }
+
+    if not scheduled_matches:
+        return False
+
+    prediction_model = MATCH_PREDICTION_MODELS_BY_YEAR.get(event.year)
+    if prediction_model is None:
+        return False
+
+    prediction_statement = select(
+        prediction_model.match_number,
+        prediction_model.match_level,
+    ).where(
+        prediction_model.event_key == event_key,
+        prediction_model.organization_id == organization_id,
+    )
+    prediction_result = await session.execute(prediction_statement)
+    existing_predictions: Set[Tuple[int, str]] = {
+        (int(match_number), match_level)
+        for match_number, match_level in prediction_result
+    }
+
+    matches_to_queue = scheduled_matches - existing_predictions
+    if not matches_to_queue:
+        return False
+
+    await _enqueue_matches_for_prediction_queue(
+        session,
+        event_key=event_key,
+        organization_id=organization_id,
+        matches=matches_to_queue,
+    )
+    return True
 
 
 @router.post(
@@ -736,6 +792,8 @@ async def download_event_match_data(
     match_data = await get_match_data_for_event_or_404(session, event_code)
     match_dicts = serialize_match_data_for_export(match_data)
 
+    await get_user_membership_or_404(session, user)
+
     if request.file_type == MatchExportType.CSV:
         buffer = io.StringIO()
         writer = csv.DictWriter(buffer, fieldnames=list(match_dicts[0].keys()))
@@ -1090,8 +1148,11 @@ async def get_match_schedule(
 
         match_key = (match_number, match_level)
         new_assignment = (red1, red2, red3, blue1, blue2, blue3)
-        if existing_match_assignments.get(match_key) != new_assignment:
+        previous_assignment = existing_match_assignments.get(match_key)
+        if previous_assignment is not None and previous_assignment != new_assignment:
             matches_for_queue.add(match_key)
+
+    await session.flush()
 
     await _enqueue_matches_for_prediction_queue(
         session,
@@ -1100,7 +1161,13 @@ async def get_match_schedule(
         matches=matches_for_queue,
     )
 
-    # 4. Commit all new matches
+    await _queue_matches_missing_predictions(
+        session,
+        event_key=event_key,
+        organization_id=int(membership.organization_id),
+    )
+
+    # 4. Commit all new matches and queued predictions
     await session.commit()
     return {"status": "success", "event": event_key, "matches_inserted": len(match_schedule_json)}
 

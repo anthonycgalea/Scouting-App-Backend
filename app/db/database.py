@@ -77,6 +77,7 @@ def create_engine_from_url(
     return create_async_engine(
         normalized_url,
         connect_args=merged_connect_args,
+        execution_options={"use_statement_cache": False},
         **kwargs,
     )
 

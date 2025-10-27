@@ -12,7 +12,7 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
-from app.db.database import async_session_factory, engine
+from app.db.database import async_session_factory
 from app.models import PredictionQueue
 from app.services.match_prediction import simulate_match_prediction
 
@@ -35,7 +35,6 @@ class QueuedMatch:
 @asynccontextmanager
 async def session_scope() -> AsyncIterator[AsyncSession]:
     """Provide a transactional scope around a series of operations."""
-
     session: AsyncSession = async_session_factory()
     try:
         yield session
@@ -52,6 +51,7 @@ async def _load_queued_matches(session: AsyncSession) -> Iterable[QueuedMatch]:
         )
         .distinct()
         .order_by(PredictionQueue.match_number.asc())
+        .execution_options(compiled_cache=None) 
     )
     rows = result.all()
     return [
@@ -78,45 +78,49 @@ async def _mark_match_complete(session: AsyncSession, match: QueuedMatch) -> Non
 async def acquire_prediction_daemon_lock() -> Tuple[bool, Optional[AsyncConnection]]:
     """Attempt to acquire a database-backed lock for the daemon.
 
-    The lock uses PostgreSQL advisory locks when available so that only a single
-    worker process runs the prediction daemon. If the database backend does not
-    support advisory locks the daemon is allowed to run without coordination.
+    Uses PostgreSQL advisory locks so that only one worker process runs
+    the prediction daemon. If advisory locks aren't supported, it runs
+    without coordination.
     """
+    async with async_session_factory() as session:
+        connection = await session.connection()
+        dialect_name = connection.dialect.name
 
-    connection = await engine.connect()
-    dialect_name = connection.dialect.name
+        if not dialect_name.startswith("postgresql"):
+            logger.info(
+                "Database dialect '%s' does not support advisory locks; "
+                "running prediction daemon without coordination.",
+                dialect_name,
+            )
+            return True, None
 
-    if not dialect_name.startswith("postgresql"):
-        logger.info(
-            "Database dialect '%s' does not support advisory locks; running prediction daemon without coordination.",
-            dialect_name,
-        )
-        await connection.close()
-        return True, None
+        try:
+            result = await connection.execute(
+                text("SELECT pg_try_advisory_lock(:lock_id)"),
+                {"lock_id": _DAEMON_LOCK_ID},
+            )
+            acquired = bool(result.scalar())
+            if acquired:
+                logger.info("Acquired match prediction daemon advisory lock.")
+                # Keep the connection open so lock persists
+                return True, connection
 
-    try:
-        result = await connection.execute(
-            text("SELECT pg_try_advisory_lock(:lock_id)"),
-            {"lock_id": _DAEMON_LOCK_ID},
-        )
-        acquired = bool(result.scalar())
-        if acquired:
-            logger.info("Acquired match prediction daemon advisory lock.")
-            return True, connection
+            logger.info(
+                "Another worker already holds the match prediction daemon advisory lock; "
+                "skipping daemon start."
+            )
+        except SQLAlchemyError:
+            logger.exception(
+                "Failed to acquire match prediction daemon lock; "
+                "daemon will not be started in this worker."
+            )
 
-        logger.info(
-            "Another worker already holds the match prediction daemon advisory lock; skipping daemon start."
-        )
-    except SQLAlchemyError:
-        logger.exception("Failed to acquire match prediction daemon lock; daemon will not be started in this worker.")
-
-    await connection.close()
+    # If we reach here, lock not acquired or exception occurred
     return False, None
 
 
 async def release_prediction_daemon_lock(connection: AsyncConnection) -> None:
     """Release the advisory lock acquired for the daemon."""
-
     try:
         await connection.execute(
             text("SELECT pg_advisory_unlock(:lock_id)"),
@@ -133,7 +137,6 @@ async def process_prediction_queue() -> bool:
 
     Returns ``True`` if any work was completed.
     """
-
     async with session_scope() as session:
         matches = await _load_queued_matches(session)
         if not matches:
@@ -161,7 +164,7 @@ async def process_prediction_queue() -> bool:
                 work_completed = True
             except HTTPException as exc:
                 logger.warning(
-                    "Prediction failed for %s %s #%s: %s",  # pragma: no cover - logging
+                    "Prediction failed for %s %s #%s: %s",
                     match.event_key,
                     match.match_level,
                     match.match_number,
@@ -170,13 +173,13 @@ async def process_prediction_queue() -> bool:
                 await session.rollback()
             except SQLAlchemyError:
                 logger.exception(
-                    "Database error while processing %s %s #%s",  # pragma: no cover - logging
+                    "Database error while processing %s %s #%s",
                     match.event_key,
                     match.match_level,
                     match.match_number,
                 )
                 await session.rollback()
-            except Exception:  # pragma: no cover - defensive guard
+            except Exception:
                 logger.exception(
                     "Unexpected error while processing %s %s #%s",
                     match.event_key,

@@ -6,8 +6,8 @@ from sqlalchemy import func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from models import TeamRecord, UserOrganization
-from services.event import (
+from app.models import TeamRecord, UserOrganization
+from app.services.event import (
     MATCH_DATA_MODELS_BY_YEAR,
     get_active_event_key_for_user,
     get_event_or_404,

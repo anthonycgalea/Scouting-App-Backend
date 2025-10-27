@@ -13,7 +13,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from models import (
+from app.models import (
     MatchData,
     MatchPredictions2025,
     Organization,
@@ -23,7 +23,7 @@ from models import (
     StatboticsData,
     UserOrganization,
 )
-from services.event import (
+from app.services.event import (
     DEFAULT_AUTO_WEIGHTS,
     DEFAULT_ENDGAME_POINTS,
     DEFAULT_TELEOP_WEIGHTS,
@@ -37,7 +37,7 @@ from services.event import (
     get_scouting_alliance_organization_ids,
     update_statbotics_data_for_event,
 )
-from services.scoring import (
+from app.services.scoring import (
     calculate_endgame_points,
     calculate_phase_points,
     resolve_endgame_points_mapping,

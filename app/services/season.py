@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from models import Season
+from app.models import Season
 
 
 async def get_seasons(session: AsyncSession) -> List[Season]:

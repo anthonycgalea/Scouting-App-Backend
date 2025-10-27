@@ -3,9 +3,9 @@ from typing import List
 from fastapi import APIRouter, Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from auth.dependencies import get_current_user
-from db.database import get_session
-from services.analytics.event_summary import (
+from app.auth.dependencies import get_current_user
+from app.db.database import get_session
+from app.services.analytics.event_summary import (
     EventTeamZScoreResponse,
     TeamEventDetailedSummary,
     TeamHeadToHeadStatistics,

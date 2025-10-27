@@ -14,7 +14,7 @@ if str(APP_PATH) not in sys.path:
 
 os.environ.setdefault("SUPABASE_JWT_SECRET", "test-secret")
 
-from auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user
 from app.main import app
 from models import (
     FRCEvent,

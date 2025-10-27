@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from auth.dependencies import get_current_user
-from db.database import get_session
-from services.team import (
+from app.auth.dependencies import get_current_user
+from app.db.database import get_session
+from app.services.team import (
     get_match_data_for_team_at_active_event,
     get_team_or_404,
 )
-from services.team_media import (
+from app.services.team_media import (
     RobotEventImageLinkResponse,
     list_team_images,
     upload_team_image,

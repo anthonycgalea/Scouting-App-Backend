@@ -1,22 +1,22 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel.ext.asyncio.session import AsyncSession
-from auth.dependencies import get_current_user
-from db.database import get_session
+from app.auth.dependencies import get_current_user
+from app.db.database import get_session
 from typing import Any, Dict, List, Optional, Union
 
-from models import Organization, FRCEvent
+from app.models import Organization, FRCEvent
 
 router = APIRouter(
     prefix="/event",
     tags=["Event"],
 )
 
-from services.event import *
-from services.match_prediction import (
+from app.services.event import *
+from app.services.match_prediction import (
     get_match_prediction_for_user_organization,
     simulate_match_prediction,
 )
-from services.team_media import (
+from app.services.team_media import (
     EventTeamImagesResponse,
     list_event_team_images,
     list_match_team_images,

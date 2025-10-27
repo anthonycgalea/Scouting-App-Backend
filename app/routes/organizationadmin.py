@@ -2,8 +2,8 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Response, UploadFil
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import SQLModel, delete, select, update
 from datetime import datetime
-from auth.dependencies import get_current_user
-from db.database import get_session
+from app.auth.dependencies import get_current_user
+from app.db.database import get_session
 from dotenv import load_dotenv
 import os, httpx
 import csv
@@ -139,7 +139,7 @@ router = APIRouter(
     tags=["Organization"]
 )
 
-from models import (
+from app.models import (
     DataValidation,
     FRCEvent,
     MatchData2025,
@@ -160,8 +160,8 @@ from models import (
     UserOrganization,
     Endgame2025,
 )
-from models.user_organization import UserRole
-from services.event import (
+from app.models.user_organization import UserRole
+from app.services.event import (
     MatchExportRequest,
     MatchExportType,
     get_active_event_key_for_user,

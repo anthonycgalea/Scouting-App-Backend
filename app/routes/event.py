@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel.ext.asyncio.session import AsyncSession
-from auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user
 from app.db.database import get_session
 from typing import Any, Dict, List, Optional, Union
 

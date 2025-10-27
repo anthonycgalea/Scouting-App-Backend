@@ -9,7 +9,7 @@ from pydantic import ConfigDict
 from sqlmodel import Field, SQLModel, delete
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user
 from app.db.database import get_session
 from app.models import PickList, PickListRank
 from app.services.event import (

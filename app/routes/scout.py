@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user
 from app.db.database import get_session
 
 from app.models import DataValidation, MatchData, PitScout, Season, SuperScoutData, ValidationStatus

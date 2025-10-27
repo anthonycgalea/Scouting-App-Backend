@@ -2,7 +2,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Response, UploadFil
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import SQLModel, delete, select, update
 from datetime import datetime
-from auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user
 from app.db.database import get_session
 from dotenv import load_dotenv
 import os, httpx

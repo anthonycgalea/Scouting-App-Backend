@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Field, SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user
 from app.db.database import get_session
 from app.models import Organization, SiteAdmins, UserOrganization, User
 from app.models.user_organization import UserRole

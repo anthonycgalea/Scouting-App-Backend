@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user
 from app.db.database import get_session
 from app.services.team import (
     get_match_data_for_team_at_active_event,

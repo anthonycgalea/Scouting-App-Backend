@@ -5,7 +5,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select, delete, SQLModel
 from typing import Optional, List, Set
 from datetime import datetime
-from auth.dependencies import require_site_admin
+from app.auth.dependencies import require_site_admin
 from app.db.database import get_session
 from dotenv import load_dotenv
 import requests, os, httpx, asyncio, traceback, aiohttp

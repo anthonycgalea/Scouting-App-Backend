@@ -10,6 +10,7 @@ from sqlalchemy.engine.url import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
+from uuid import uuid4
 
 # Load environment variables from a .env file if present so that running the
 # application locally works without manually exporting variables.
@@ -52,6 +53,7 @@ def _default_connect_args(url: Optional[str]) -> Dict[str, Any]:
         return {
             "statement_cache_size": 0,
             "prepared_statement_cache_size": 0,
+            "prepared_statement_name_func": lambda: "__asyncpg_stmt_unq_" + uuid4().hex,
         }
 
     return {}

@@ -95,25 +95,23 @@ async def acquire_prediction_daemon_lock() -> Tuple[bool, Optional[AsyncConnecti
             return True, None
 
         try:
-            result = await connection.execute(
-                text("SELECT pg_try_advisory_lock(:lock_id)"),
-                {"lock_id": _DAEMON_LOCK_ID},
+            # Inline the constant lock ID directly into SQL to avoid prepared statements
+            result = await(await connection.execution_options(compiled_cache=None)).execute(
+                text(f"SELECT pg_try_advisory_lock({int(_DAEMON_LOCK_ID)})")
             )
             acquired = bool(result.scalar())
             if acquired:
                 logger.info("Acquired match prediction daemon advisory lock.")
-                # Keep the connection open so lock persists
                 return True, connection
 
             logger.info(
-                "Another worker already holds the match prediction daemon advisory lock; "
-                "skipping daemon start."
+                "Another worker already holds the match prediction daemon advisory lock; skipping daemon start."
             )
         except SQLAlchemyError:
             logger.exception(
-                "Failed to acquire match prediction daemon lock; "
-                "daemon will not be started in this worker."
+                "Failed to acquire match prediction daemon lock; daemon will not be started in this worker."
             )
+
 
     # If we reach here, lock not acquired or exception occurred
     return False, None

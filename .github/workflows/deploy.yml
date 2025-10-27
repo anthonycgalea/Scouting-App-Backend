@@ -21,7 +21,6 @@ jobs:
           DO_HOST: ${{ secrets.DO_HOST }}
           DO_USER: ${{ secrets.DO_USER }}
           DO_PASS: ${{ secrets.DO_PASS }}
-          DO_SCREEN_ID: "1349"
         run: |
           sshpass -p "$DO_PASS" ssh -o StrictHostKeyChecking=no $DO_USER@$DO_HOST << 'EOF'
             set -e
@@ -36,27 +35,21 @@ jobs:
             echo "🔹 Installing dependencies..."
             pip install -r requirements.txt
 
-            echo "🔹 Restarting FastAPI server in screen session..."
-            if [ -z "$DO_SCREEN_ID" ]; then
-              echo "❌ DO_SCREEN_ID secret is not configured."
-              exit 1
-            fi
-
-            SCREEN_ID="$DO_SCREEN_ID"
-            if screen -list | grep -q "$SCREEN_ID"; then
-              echo "  ➤ Stopping running process inside screen $SCREEN_ID"
-              screen -S "$SCREEN_ID" -p 0 -X stuff $'\003'
+            echo "🔹 Restarting FastAPI server in screen session 1349..."
+            if screen -list | grep -q "1349"; then
+              echo "  ➤ Stopping running process inside screen 1349"
+              screen -S 1349 -p 0 -X stuff $'\003'
               sleep 5
             else
-              echo "  ➤ Screen $SCREEN_ID not found, creating it"
-              screen -dmS "$SCREEN_ID"
+              echo "  ➤ Screen 1349 not found, creating it"
+              screen -dmS 1349
               sleep 2
             fi
 
-            echo "  ➤ Starting FastAPI server within screen $SCREEN_ID"
-            screen -S "$SCREEN_ID" -p 0 -X stuff $'cd /opt/Scouting-App-Backend\n'
-            screen -S "$SCREEN_ID" -p 0 -X stuff $'source venv/bin/activate\n'
-            screen -S "$SCREEN_ID" -p 0 -X stuff $'uvicorn main:app --app-dir app --host 127.0.0.1 --port 8000 --workers 2\n'
+            echo "  ➤ Starting FastAPI server within screen 1349"
+            screen -S 1349 -p 0 -X stuff $'cd /opt/Scouting-App-Backend\n'
+            screen -S 1349 -p 0 -X stuff $'source venv/bin/activate\n'
+            screen -S 1349 -p 0 -X stuff $'uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 3 --proxy-headers\n'
 
             echo "✅ Deployment complete."
           EOF

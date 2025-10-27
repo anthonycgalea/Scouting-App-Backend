@@ -49,7 +49,9 @@ async def _load_queued_matches(session: AsyncSession) -> Iterable[QueuedMatch]:
             PredictionQueue.event_key,
             PredictionQueue.match_level,
             PredictionQueue.match_number,
-        ).distinct()
+        )
+        .distinct()
+        .order_by(PredictionQueue.match_number.asc())
     )
     rows = result.all()
     return [

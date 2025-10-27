@@ -1739,8 +1739,11 @@ async def batch_update_match(session: AsyncSession, matches: List[MatchData], us
     if not matches:
         return
 
+    matches_to_enqueue: List[Tuple[MatchData, type[MatchData]]] = []
+
     for match in matches:
-        await update_scouted_match(session, match, user)
+        updated_match, match_model = await update_scouted_match(session, match, user)
+        matches_to_enqueue.append((updated_match, match_model))
 
     try:
         await session.commit()
@@ -1751,7 +1754,17 @@ async def batch_update_match(session: AsyncSession, matches: List[MatchData], us
             detail="Match data conflicts with an existing submission for this match",
         ) from exc
 
-async def update_scouted_match(session: AsyncSession, match: MatchData, user: User):
+    for updated_match, match_model in matches_to_enqueue:
+        await _enqueue_unplayed_matches_for_prediction_queue(
+            session,
+            updated_match,
+            match_model,
+        )
+
+
+async def update_scouted_match(
+    session: AsyncSession, match: MatchData, user: User
+) -> Tuple[MatchData, type[MatchData]]:
     (
         _base_match,
         _payload,
@@ -1766,6 +1779,8 @@ async def update_scouted_match(session: AsyncSession, match: MatchData, user: Us
     _apply_match_update(stored_match, match_model, updated_payload)
 
     session.add(stored_match)
+
+    return stored_match, match_model
 
 
 async def submit_scouted_match(

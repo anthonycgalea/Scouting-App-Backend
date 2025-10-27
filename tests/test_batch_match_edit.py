@@ -1,4 +1,5 @@
 import asyncio
+import os
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -15,6 +16,7 @@ from models import (  # type: ignore[import]
     Endgame2025,
     FRCEvent,
     MatchData2025,
+    MatchSchedule,
     Organization,
     OrganizationEvent,
     Season,
@@ -22,7 +24,10 @@ from models import (  # type: ignore[import]
     User,
     UserOrganization,
     UserRole,
+    PredictionQueue,
 )
+os.environ.setdefault("SUPABASE_JWT_SECRET", "test-secret")
+
 from app.services.scout import batch_update_match
 from tests.conftest import AsyncSessionLocal
 
@@ -100,6 +105,28 @@ def test_batch_update_match_commits_changes(setup_database):
             session.add(original_match)
             await session.commit()
 
+            schedule_kwargs = dict(
+                event_key=context["event_key"],
+                match_level="qm",
+                red1_id=context["team_number"],
+                red2_id=context["team_number"],
+                red3_id=context["team_number"],
+                blue1_id=context["team_number"],
+                blue2_id=context["team_number"],
+                blue3_id=context["team_number"],
+            )
+
+            schedule_match_1 = MatchSchedule(
+                match_number=1,
+                **schedule_kwargs,
+            )
+            schedule_match_2 = MatchSchedule(
+                match_number=2,
+                **schedule_kwargs,
+            )
+            session.add_all([schedule_match_1, schedule_match_2])
+            await session.commit()
+
             updated_match = MatchData2025(
                 season=context["season_id"],
                 team_number=context["team_number"],
@@ -137,3 +164,19 @@ def test_batch_update_match_commits_changes(setup_database):
 
     assert stored_match is not None
     assert stored_match.endgame == Endgame2025.DEEP
+
+    async def _fetch_prediction_queue():
+        async with AsyncSessionLocal() as verification_session:
+            statement = select(PredictionQueue).where(
+                PredictionQueue.event_key == context["event_key"],
+                PredictionQueue.organization_id == context["organization_id"],
+            )
+            result = await verification_session.execute(statement)
+            return result.scalars().all()
+
+    queued_matches = asyncio.run(_fetch_prediction_queue())
+
+    assert len(queued_matches) == 1
+    queued_match = queued_matches[0]
+    assert queued_match.match_number == 2
+    assert queued_match.match_level == "qm"

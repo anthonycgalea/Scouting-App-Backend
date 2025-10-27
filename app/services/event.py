@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from sqlmodel import Field, SQLModel, delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from models import (
+from app.models import (
     MatchSchedule,
     MatchData2025,
     MatchData2026,
@@ -29,13 +29,13 @@ from models import (
     EventRankings,
     StatboticsData,
 )
-from services.scoring import (
+from app.services.scoring import (
     calculate_endgame_points,
     extract_field_value,
     resolve_endgame_points_mapping,
     resolve_weight_mapping,
 )
-from services.season import get_season_by_year_or_404
+from app.services.season import get_season_by_year_or_404
 
 
 async def get_scouting_alliance_organization_ids(

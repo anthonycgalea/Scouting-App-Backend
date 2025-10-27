@@ -14,14 +14,14 @@ from pydantic import BaseModel, ConfigDict
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from models import RobotEventImageLink
-from services.aws import get_s3_client, get_team_images_bucket
-from services.event import (
+from app.models import RobotEventImageLink
+from app.services.aws import get_s3_client, get_team_images_bucket
+from app.services.event import (
     get_active_event_key_for_user,
     get_event_or_404,
     get_match_or_404,
 )
-from services.team import get_team_or_404
+from app.services.team import get_team_or_404
 from sqlmodel import SQLModel
 
 ALLOWED_IMAGE_EXTENSIONS: Iterable[str] = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}

@@ -29,7 +29,7 @@ from sqlmodel import SQLModel, delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from uuid import UUID
 
-from models import (
+from app.models import (
     Alliance,
     DataValidation,
     MatchData,
@@ -49,15 +49,15 @@ from models import (
     UserOrganization,
     ValidationStatus,
 )
-from models.tba_match_data_2025 import Endgame2025 as TBAEndgame2025
+from app.models.tba_match_data_2025 import Endgame2025 as TBAEndgame2025
 
-from services.event import (
+from app.services.event import (
     MATCH_DATA_MODELS_BY_YEAR,
     get_active_event_key_for_user,
     get_event_or_404,
     get_scouting_alliance_organization_ids,
 )
-from services.season import get_season_by_year_or_404
+from app.services.season import get_season_by_year_or_404
 
 TBA_API_BASE_URL = "https://www.thebluealliance.com/api/v3"
 TBA_API_KEY_ENV_VAR = "TBA_API_KEY"

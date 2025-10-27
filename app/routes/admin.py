@@ -6,7 +6,7 @@ from sqlmodel import select, delete, SQLModel
 from typing import Optional, List, Set
 from datetime import datetime
 from auth.dependencies import require_site_admin
-from db.database import get_session
+from app.db.database import get_session
 from dotenv import load_dotenv
 import requests, os, httpx, asyncio, traceback, aiohttp
 
@@ -17,7 +17,7 @@ router = APIRouter(
     dependencies=[Depends(require_site_admin)],
 )
 
-from models import (
+from app.models import (
     Organization,
     OrganizationFeatureSettings,
     TeamRecord,

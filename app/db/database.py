@@ -52,6 +52,12 @@ def _default_connect_args(url: Optional[str]) -> Dict[str, Any]:
         return {
             "statement_cache_size": 0,
             "prepared_statement_cache_size": 0,
+            # ``prepare_threshold`` ensures asyncpg never promotes a statement to a
+            # prepared statement even if it is executed repeatedly.  PgBouncer in
+            # transaction/statement pooling mode cannot safely work with prepared
+            # statements because backend connections are swapped between clients
+            # transparently, so we disable the optimisation entirely.
+            "prepare_threshold": 0,
         }
 
     return {}

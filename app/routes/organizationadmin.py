@@ -1032,8 +1032,15 @@ async def get_match_schedule(
     statement = select(MatchSchedule).where(MatchSchedule.event_key == event_key)
     result = await session.exec(statement)
     existing_matches = result.all()
-    existing_match_keys = {
-        (match.match_number, match.match_level)
+    existing_match_assignments = {
+        (match.match_number, match.match_level): (
+            int(match.red1_id),
+            int(match.red2_id),
+            int(match.red3_id),
+            int(match.blue1_id),
+            int(match.blue2_id),
+            int(match.blue3_id),
+        )
         for match in existing_matches
     }
     for match in existing_matches:
@@ -1081,8 +1088,10 @@ async def get_match_schedule(
         )
         session.add(match_record)
 
-        if (match_number, match_level) not in existing_match_keys:
-            matches_for_queue.add((match_number, match_level))
+        match_key = (match_number, match_level)
+        new_assignment = (red1, red2, red3, blue1, blue2, blue3)
+        if existing_match_assignments.get(match_key) != new_assignment:
+            matches_for_queue.add(match_key)
 
     await _enqueue_matches_for_prediction_queue(
         session,

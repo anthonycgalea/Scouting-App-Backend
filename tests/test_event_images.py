@@ -16,7 +16,7 @@ os.environ.setdefault("SUPABASE_JWT_SECRET", "test-secret")
 
 from app.auth.dependencies import get_current_user
 from app.main import app
-from models import (
+from app.models import (
     FRCEvent,
     Organization,
     OrganizationEvent,

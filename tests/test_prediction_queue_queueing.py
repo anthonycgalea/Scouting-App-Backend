@@ -28,7 +28,7 @@ for _name, _module in list(sys.modules.items()):
 import pytest
 from sqlmodel import select
 
-from models import (
+from app.models import (
     FRCEvent,
     MatchData2025,
     MatchSchedule,
@@ -42,7 +42,7 @@ from models import (
     UserOrganization,
     UserRole,
 )
-from models.other_organization_event_access import OrgEventAllianceInviteStatus
+from app.models.other_organization_event_access import OrgEventAllianceInviteStatus
 
 organizationadmin_module = importlib.import_module("app.routes.organizationadmin")
 _enqueue_matches_for_prediction_queue = (

@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from models import (
+from app.models import (
     UserOrganization,
 )
 from ..event import (

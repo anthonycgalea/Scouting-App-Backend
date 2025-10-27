@@ -686,6 +686,41 @@ async def get_match_prediction_for_user_organization(
     return predictions[0]
 
 
+async def list_match_predictions_for_event(
+    session: AsyncSession,
+    user: Any,
+):
+    """Return all stored match predictions for the active event."""
+
+    user_payload = _normalize_user_payload(user)
+
+    event_key = await get_active_event_key_for_user(session, user_payload)
+    event = await get_event_or_404(session, event_key)
+    membership = await _get_user_membership_or_404(session, user_payload)
+
+    prediction_model = MATCH_PREDICTION_MODELS_BY_YEAR.get(event.year)
+    if prediction_model is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Match predictions are not available for this event year",
+        )
+
+    statement = (
+        select(prediction_model)
+        .where(
+            prediction_model.event_key == event_key,
+            prediction_model.organization_id == membership.organization_id,
+        )
+        .order_by(
+            prediction_model.match_level,
+            prediction_model.match_number,
+        )
+    )
+
+    result = await session.execute(statement)
+    return list(result.scalars().all())
+
+
 async def simulate_match_prediction(
     session: AsyncSession,
     event_code: str,

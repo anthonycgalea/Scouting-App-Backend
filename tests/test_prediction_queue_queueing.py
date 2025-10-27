@@ -34,6 +34,7 @@ from models import (
     MatchSchedule,
     Organization,
     OrganizationEvent,
+    OrganizationEventAlliance,
     PredictionQueue,
     Season,
     TeamRecord,
@@ -41,12 +42,13 @@ from models import (
     UserOrganization,
     UserRole,
 )
+from models.other_organization_event_access import OrgEventAllianceInviteStatus
 
 organizationadmin_module = importlib.import_module("app.routes.organizationadmin")
 _enqueue_matches_for_prediction_queue = (
     organizationadmin_module._enqueue_matches_for_prediction_queue
 )
-from app.services.scout import edit_2025_match
+from app.services.scout import batch_update_match, edit_2025_match
 from tests.conftest import AsyncSessionLocal
 
 
@@ -211,6 +213,168 @@ def test_edit_match_enqueues_unplayed_matches(setup_database):
                 for row in result.scalars().all()
             }
             assert queued_matches == {(2, "qm")}
+
+    asyncio.run(_run_test())
+
+
+def test_editing_allied_match_queues_for_active_org(setup_database):
+    async def _run_test() -> None:
+        async with AsyncSessionLocal() as session:
+            season = Season(id=7301, year=2025, name="Alliance Season")
+            event = FRCEvent(
+                event_key="2025allyqueue",
+                event_name="Alliance Queue Event",
+                short_name="Alliance Queue",
+                year=2025,
+                week=2,
+            )
+            org_a = Organization(name="Owner Org", team_number=5314)
+            org_b = Organization(name="Editor Org", team_number=9090)
+            user_a_id = uuid4()
+            user_b_id = uuid4()
+            now = datetime.utcnow()
+            owner_user = User(
+                id=user_a_id,
+                email="owner@example.com",
+                auth_provider="discord",
+                display_name="Owner",
+                logged_in_user_org=None,
+                created_at=now,
+                updated_at=now,
+            )
+            editor_user = User(
+                id=user_b_id,
+                email="editor@example.com",
+                auth_provider="discord",
+                display_name="Editor",
+                logged_in_user_org=None,
+                created_at=now,
+                updated_at=now,
+            )
+
+            team_records = [
+                TeamRecord(teamNumber=5314, teamName="Team 5314"),
+                TeamRecord(teamNumber=9000, teamName="Partner"),
+                TeamRecord(teamNumber=9001, teamName="Partner 2"),
+                TeamRecord(teamNumber=9002, teamName="Opponent 1"),
+                TeamRecord(teamNumber=9003, teamName="Opponent 2"),
+                TeamRecord(teamNumber=9004, teamName="Opponent 3"),
+            ]
+
+            session.add_all([season, event, org_a, org_b, owner_user, editor_user, *team_records])
+            await session.commit()
+            await session.refresh(org_a)
+            await session.refresh(org_b)
+
+            owner_membership = UserOrganization(
+                user_id=user_a_id,
+                organization_id=org_a.id,
+                role=UserRole.ADMIN,
+            )
+            editor_membership = UserOrganization(
+                user_id=user_b_id,
+                organization_id=org_b.id,
+                role=UserRole.ADMIN,
+            )
+            session.add_all([owner_membership, editor_membership])
+            await session.commit()
+            await session.refresh(editor_membership)
+
+            owner_org_event = OrganizationEvent(
+                organization_id=org_a.id,
+                event_key=event.event_key,
+                active=True,
+            )
+            editor_org_event = OrganizationEvent(
+                organization_id=org_b.id,
+                event_key=event.event_key,
+                active=True,
+            )
+            session.add_all([owner_org_event, editor_org_event])
+            await session.commit()
+            await session.refresh(editor_org_event)
+
+            alliance = OrganizationEventAlliance(
+                orgevent_Uid=editor_org_event.id,
+                other_organization_id=org_a.id,
+                org_invite_status=OrgEventAllianceInviteStatus.ACCEPTED,
+            )
+            session.add(alliance)
+            await session.commit()
+
+            schedule_entries = [
+                MatchSchedule(
+                    event_key=event.event_key,
+                    match_number=1,
+                    match_level="qm",
+                    red1_id=5314,
+                    red2_id=9000,
+                    red3_id=9001,
+                    blue1_id=9002,
+                    blue2_id=9003,
+                    blue3_id=9004,
+                ),
+                MatchSchedule(
+                    event_key=event.event_key,
+                    match_number=2,
+                    match_level="qm",
+                    red1_id=5314,
+                    red2_id=9000,
+                    red3_id=9001,
+                    blue1_id=9002,
+                    blue2_id=9003,
+                    blue3_id=9004,
+                ),
+            ]
+            session.add_all(schedule_entries)
+            await session.commit()
+
+            owner_match = MatchData2025(
+                season=season.id,
+                team_number=5314,
+                event_key=event.event_key,
+                match_number=1,
+                match_level="qm",
+                user_id=user_a_id,
+                organization_id=org_a.id,
+                notes="Owner data",
+            )
+            session.add(owner_match)
+            await session.commit()
+
+            updated_match = MatchData2025(
+                season=season.id,
+                team_number=5314,
+                event_key=event.event_key,
+                match_number=1,
+                match_level="qm",
+                user_id=user_a_id,
+                organization_id=org_a.id,
+                notes="Edited by ally",
+            )
+
+            user_payload = {"id": str(user_b_id), "user_org": editor_membership.id}
+
+            await batch_update_match(session, [updated_match], user_payload)
+
+            result = await session.execute(
+                select(PredictionQueue).where(
+                    PredictionQueue.event_key == event.event_key,
+                    PredictionQueue.organization_id == org_b.id,
+                )
+            )
+            queued_matches = {
+                (row.match_number, row.match_level) for row in result.scalars().all()
+            }
+            assert queued_matches == {(2, "qm")}
+
+            other_result = await session.execute(
+                select(PredictionQueue).where(
+                    PredictionQueue.event_key == event.event_key,
+                    PredictionQueue.organization_id == org_a.id,
+                )
+            )
+            assert not other_result.scalars().all()
 
     asyncio.run(_run_test())
 

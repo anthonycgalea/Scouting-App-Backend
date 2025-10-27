@@ -12,7 +12,7 @@ APP_PATH = Path(__file__).resolve().parents[1] / "app"
 if str(APP_PATH) not in sys.path:
     sys.path.append(str(APP_PATH))
 
-from models import (  # type: ignore[import]
+from app.models import (  # type: ignore[import]
     Endgame2025,
     FRCEvent,
     MatchData2025,

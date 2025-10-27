@@ -14,6 +14,7 @@ router = APIRouter(
 from app.services.event import *
 from app.services.match_prediction import (
     get_match_prediction_for_user_organization,
+    list_match_predictions_for_event,
     simulate_match_prediction,
 )
 from app.services.team_media import (
@@ -65,6 +66,14 @@ async def run_match_simulation(
 ):
     event_code = await get_active_event_key_for_user(session, user)
     return await simulate_match_prediction(session, event_code, matchLevel, matchNumber)
+
+
+@router.get("/matches/simulation", tags=["Scout"])
+async def list_match_simulations(
+    session: AsyncSession = Depends(get_session),
+    user=Depends(get_current_user),
+):
+    return await list_match_predictions_for_event(session, user)
 
 
 @router.get("/matches")

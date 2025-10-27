@@ -34,9 +34,18 @@ def _normalize_database_url(raw_url: Optional[str]) -> Optional[str]:
 
     if drivername.startswith("postgresql") and "+asyncpg" not in drivername:
         url = url.set(drivername="postgresql+asyncpg")
+        drivername = url.drivername
 
     if (url.host or "").find("supabase") != -1 and url.port != 6543:
         url = url.set(port=6543)
+
+    if "asyncpg" in drivername:
+        url = url.update_query_dict(
+            {
+                "statement_cache_size": "0",
+                "prepared_statement_cache_size": "0",
+            }
+        )
 
     return url.render_as_string(hide_password=False)
 

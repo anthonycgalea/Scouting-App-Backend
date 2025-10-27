@@ -1,11 +1,19 @@
 import asyncio
 import os
+import sys
+from pathlib import Path
 
 import pytest
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+APP_PATH = PROJECT_ROOT / "app"
+
+if str(APP_PATH) not in sys.path:
+    sys.path.insert(0, str(APP_PATH))
 
 os.environ.setdefault("DB_URL", "sqlite+aiosqlite://")
 
@@ -40,6 +48,10 @@ async def _drop_tables():
 
 @pytest.fixture(scope="module", autouse=True)
 def setup_database():
+    if os.getenv("SKIP_DB_SETUP") == "1":
+        yield
+        return
+
     from app.main import app
     from app.db.database import get_session
 

@@ -1,8 +1,7 @@
-"""Background daemon for processing queued match predictions."""
+"""Utilities for processing queued match predictions."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -13,7 +12,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import async_session_factory, engine, init_db
+from app.db.database import async_session_factory
 from app.models import PredictionQueue
 from app.services.match_prediction import simulate_match_prediction
 
@@ -132,20 +131,9 @@ async def process_prediction_queue() -> bool:
         return work_completed
 
 
-async def main() -> None:
-    logger.info("Starting match prediction daemon.")
-    try:
-        await init_db()
-    except Exception:  # pragma: no cover - defensive guard
-        logger.exception("Failed to initialize database schema")
-    while True:
-        try:
-            await process_prediction_queue()
-        except Exception:  # pragma: no cover - defensive guard
-            logger.exception("Unhandled error in prediction daemon loop")
-        logger.info("Sleeping for %d seconds.", SLEEP_INTERVAL_SECONDS)
-        await asyncio.sleep(SLEEP_INTERVAL_SECONDS)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+__all__ = [
+    "QueuedMatch",
+    "SLEEP_INTERVAL_SECONDS",
+    "process_prediction_queue",
+    "session_scope",
+]

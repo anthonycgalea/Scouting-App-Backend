@@ -725,13 +725,27 @@ async def simulate_match_prediction(
     n_samples = 10_000
     now = datetime.now()
     results: Dict[int, Dict[str, float]] = {}
+    processed_organization_ids: Set[int] = set()
 
     for organization_id in organization_ids:
+        if organization_id is None:
+            continue
+
+        base_organization_id = int(organization_id)
+        if base_organization_id in processed_organization_ids:
+            continue
+
         alliance_organization_ids = list(
             await get_scouting_alliance_organization_ids(
-                session, event_code, int(organization_id)
+                session, event_code, base_organization_id
             )
         )
+        if not alliance_organization_ids:
+            continue
+
+        alliance_organization_ids = [
+            int(org_id) for org_id in alliance_organization_ids if org_id is not None
+        ]
         if not alliance_organization_ids:
             continue
 
@@ -860,46 +874,48 @@ async def simulate_match_prediction(
             "blue_r_coral_rp": blue_r_coral_rp,
         }
 
-        existing_prediction = await session.get(
-            prediction_model,
-            (event_code, int(match_number), match_level, int(organization_id)),
-        )
-
-        if existing_prediction is None:
-            prediction_record = prediction_model(
-                season=season.id,
-                event_key=event_code,
-                match_number=int(match_number),
-                match_level=match_level,
-                organization_id=int(organization_id),
-                red_alliance_win_pct=red_win_pct,
-                blue_alliance_win_pct=blue_win_pct,
-                n_samples=n_samples,
+        for alliance_org_id in alliance_organization_ids:
+            existing_prediction = await session.get(
+                prediction_model,
+                (event_code, int(match_number), match_level, alliance_org_id),
             )
-            prediction_record.timestamp = now
-        else:
-            prediction_record = existing_prediction
-            prediction_record.season = season.id
-            prediction_record.red_alliance_win_pct = red_win_pct
-            prediction_record.blue_alliance_win_pct = blue_win_pct
-            prediction_record.n_samples = n_samples
-            prediction_record.timestamp = now
 
-        for field in RP_PREDICTION_FIELDS:
-            value = rp_predictions.get(field, 0.5)
-            if hasattr(prediction_record, field):
-                setattr(prediction_record, field, float(value))
+            if existing_prediction is None:
+                prediction_record = prediction_model(
+                    season=season.id,
+                    event_key=event_code,
+                    match_number=int(match_number),
+                    match_level=match_level,
+                    organization_id=alliance_org_id,
+                    red_alliance_win_pct=red_win_pct,
+                    blue_alliance_win_pct=blue_win_pct,
+                    n_samples=n_samples,
+                )
+                prediction_record.timestamp = now
+            else:
+                prediction_record = existing_prediction
+                prediction_record.season = season.id
+                prediction_record.red_alliance_win_pct = red_win_pct
+                prediction_record.blue_alliance_win_pct = blue_win_pct
+                prediction_record.n_samples = n_samples
+                prediction_record.timestamp = now
 
-        if hasattr(prediction_record, "updated_at"):
-            setattr(prediction_record, "updated_at", now)
+            for field in RP_PREDICTION_FIELDS:
+                value = rp_predictions.get(field, 0.5)
+                if hasattr(prediction_record, field):
+                    setattr(prediction_record, field, float(value))
 
-        session.add(prediction_record)
+            if hasattr(prediction_record, "updated_at"):
+                setattr(prediction_record, "updated_at", now)
 
-        results[int(organization_id)] = {
-            "red_alliance_win_pct": red_win_pct,
-            "blue_alliance_win_pct": blue_win_pct,
-            **rp_predictions,
-        }
+            session.add(prediction_record)
+
+            results[alliance_org_id] = {
+                "red_alliance_win_pct": red_win_pct,
+                "blue_alliance_win_pct": blue_win_pct,
+                **rp_predictions,
+            }
+            processed_organization_ids.add(alliance_org_id)
 
     await session.commit()
 

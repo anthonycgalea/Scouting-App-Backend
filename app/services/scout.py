@@ -1739,11 +1739,13 @@ async def batch_update_match(session: AsyncSession, matches: List[MatchData], us
     if not matches:
         return
 
-    matches_to_enqueue: List[Tuple[MatchData, type[MatchData]]] = []
+    matches_to_enqueue: List[Tuple[MatchData, type[MatchData], int]] = []
 
     for match in matches:
-        updated_match, match_model = await update_scouted_match(session, match, user)
-        matches_to_enqueue.append((updated_match, match_model))
+        updated_match, match_model, active_org_id = await update_scouted_match(
+            session, match, user
+        )
+        matches_to_enqueue.append((updated_match, match_model, active_org_id))
 
     try:
         await session.commit()
@@ -1754,22 +1756,23 @@ async def batch_update_match(session: AsyncSession, matches: List[MatchData], us
             detail="Match data conflicts with an existing submission for this match",
         ) from exc
 
-    for updated_match, match_model in matches_to_enqueue:
+    for updated_match, match_model, active_org_id in matches_to_enqueue:
         await _enqueue_unplayed_matches_for_prediction_queue(
             session,
             updated_match,
             match_model,
+            target_organization_id=active_org_id,
         )
 
 
 async def update_scouted_match(
     session: AsyncSession, match: MatchData, user: User
-) -> Tuple[MatchData, type[MatchData]]:
+) -> Tuple[MatchData, type[MatchData], int]:
     (
         _base_match,
         _payload,
         match_model,
-        _membership,
+        membership,
         typed_match,
         stored_match,
         _alliance_organization_ids,
@@ -1780,7 +1783,7 @@ async def update_scouted_match(
 
     session.add(stored_match)
 
-    return stored_match, match_model
+    return stored_match, match_model, int(membership.organization_id)
 
 
 async def submit_scouted_match(
@@ -2171,8 +2174,10 @@ async def _enqueue_unplayed_matches_for_prediction_queue(
     session: AsyncSession,
     match: MatchData,
     match_model: type[MatchData],
+    *,
+    target_organization_id: int | None = None,
 ) -> None:
-    organization_id = getattr(match, "organization_id", None)
+    organization_id = target_organization_id or getattr(match, "organization_id", None)
     event_key = getattr(match, "event_key", None)
     team_number = getattr(match, "team_number", None)
 

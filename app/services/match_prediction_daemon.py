@@ -12,9 +12,9 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.database import async_session_factory
-from models import PredictionQueue
-from services.match_prediction import simulate_match_prediction
+from app.db.database import async_session_factory
+from app.models import PredictionQueue
+from app.services.match_prediction import simulate_match_prediction
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")

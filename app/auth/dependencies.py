@@ -9,8 +9,8 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from uuid import UUID
 
-from db.database import get_session
-from models import AutoAssignUserOrg, SiteAdmins, User, UserOrganization, UserRole
+from app.db.database import get_session
+from app.models import AutoAssignUserOrg, SiteAdmins, User, UserOrganization, UserRole
 
 # Load .env file
 load_dotenv()

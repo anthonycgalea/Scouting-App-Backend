@@ -3,10 +3,10 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, Query
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from db.database import get_session
-from models import Season, TeamRecord
+from app.db.database import get_session
+from app.models import Season, TeamRecord
 from pydantic import BaseModel
-from services.event import (
+from app.services.event import (
     EventResponse,
     MatchScheduleResponse,
     TeamEventResponse,
@@ -14,8 +14,8 @@ from services.event import (
     get_event_teams_or_404,
     get_match_schedule_or_404,
 )
-from services.season import get_seasons
-from services.team import get_team_records_page
+from app.services.season import get_seasons
+from app.services.team import get_team_records_page
 
 
 class PaginationMeta(BaseModel):

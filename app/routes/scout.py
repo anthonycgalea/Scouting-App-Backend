@@ -9,11 +9,11 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from auth.dependencies import get_current_user
-from db.database import get_session
+from app.db.database import get_session
 
-from models import DataValidation, MatchData, PitScout, Season, SuperScoutData, ValidationStatus
-from services.event import MATCH_DATA_MODELS_BY_YEAR
-from services.scout import PIT_SCOUT_MODELS_BY_YEAR
+from app.models import DataValidation, MatchData, PitScout, Season, SuperScoutData, ValidationStatus
+from app.services.event import MATCH_DATA_MODELS_BY_YEAR
+from app.services.scout import PIT_SCOUT_MODELS_BY_YEAR
 
 router = APIRouter(
     prefix="/scout",
@@ -22,7 +22,7 @@ router = APIRouter(
 
 logger = logging.getLogger(__name__)
 
-from services.scout import (
+from app.services.scout import (
     DataValidationFilterRequest,
     DataValidationUpdateRequest,
     ScoutMatchFilterRequest,

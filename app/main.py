@@ -9,7 +9,7 @@ from app.services.match_prediction_daemon import (
     SLEEP_INTERVAL_SECONDS,
     process_prediction_queue,
 )
-from routes import (
+from app.routes import (
     admin,
     analytics,
     event,

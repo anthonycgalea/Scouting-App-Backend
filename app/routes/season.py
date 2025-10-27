@@ -3,9 +3,9 @@ from typing import List
 from fastapi import APIRouter, Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from db.database import get_session
-from models import Season
-from services.season import get_seasons
+from app.db.database import get_session
+from app.models import Season
+from app.services.season import get_seasons
 
 router = APIRouter(tags=["Season"])
 

@@ -2403,6 +2403,13 @@ async def _edit_match_for_year(
         ) from exc
 
     await session.refresh(existing_match)
+
+    await _enqueue_unplayed_matches_for_prediction_queue(
+        session,
+        existing_match,
+        match_model,
+    )
+
     return cast(MatchDataType, existing_match)
 
 async def edit_2025_match(session: AsyncSession, match: MatchData2025, user: User) -> MatchData2025:

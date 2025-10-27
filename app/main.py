@@ -4,12 +4,12 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.db.database import init_db
-from app.services.match_prediction_daemon import (
+from .db.database import init_db
+from .services.match_prediction_daemon import (
     SLEEP_INTERVAL_SECONDS,
     process_prediction_queue,
 )
-from routes import (
+from .routes import (
     admin,
     analytics,
     event,

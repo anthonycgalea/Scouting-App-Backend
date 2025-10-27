@@ -9,7 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.db.database import init_db
 from app.services.match_prediction_daemon import (
     SLEEP_INTERVAL_SECONDS,
+    acquire_prediction_daemon_lock,
     process_prediction_queue,
+    release_prediction_daemon_lock,
 )
 from app.routes import (
     admin,
@@ -120,24 +122,44 @@ app.include_router(public.router)
 
 async def run_prediction_daemon() -> None:
     logger.info("Starting match prediction daemon")
-    while True:
-        try:
-            await process_prediction_queue()
-        except Exception:
-            logger.exception("Unhandled error in prediction daemon loop")
-        logger.info("Sleeping for %d seconds.", SLEEP_INTERVAL_SECONDS)
-        await asyncio.sleep(SLEEP_INTERVAL_SECONDS)
+    try:
+        while True:
+            try:
+                await process_prediction_queue()
+            except Exception:
+                logger.exception("Unhandled error in prediction daemon loop")
+            logger.info("Sleeping for %d seconds.", SLEEP_INTERVAL_SECONDS)
+            await asyncio.sleep(SLEEP_INTERVAL_SECONDS)
+    except asyncio.CancelledError:
+        logger.info("Match prediction daemon cancelled; shutting down.")
+        raise
 
 
 @app.on_event("startup")
 async def on_startup() -> None:
     await init_db()
-    app.state.prediction_daemon_task = asyncio.create_task(run_prediction_daemon())
+    should_run, lock_connection = await acquire_prediction_daemon_lock()
+    app.state.prediction_daemon_lock = lock_connection
+    if should_run:
+        app.state.prediction_daemon_task = asyncio.create_task(run_prediction_daemon())
+    else:
+        app.state.prediction_daemon_task = None
 
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
     logger.info("FastAPI application shutting down.")
+    task = getattr(app.state, "prediction_daemon_task", None)
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    lock_connection = getattr(app.state, "prediction_daemon_lock", None)
+    if lock_connection is not None:
+        await release_prediction_daemon_lock(lock_connection)
 
 
 @app.get("/ping")

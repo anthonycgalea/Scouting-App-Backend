@@ -21,7 +21,7 @@ jobs:
           DO_HOST: ${{ secrets.DO_HOST }}
           DO_USER: ${{ secrets.DO_USER }}
           DO_PASS: ${{ secrets.DO_PASS }}
-          DO_SCREEN_ID: ${{ secrets.DO_SCREEN_ID }}
+          DO_SCREEN_ID: "1349"
         run: |
           sshpass -p "$DO_PASS" ssh -o StrictHostKeyChecking=no $DO_USER@$DO_HOST << 'EOF'
             set -e

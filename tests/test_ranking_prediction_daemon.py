@@ -194,6 +194,99 @@ def test_process_queue_creates_predictions(monkeypatch, setup_database) -> None:
     asyncio.run(_run_test())
 
 
+def test_process_queue_ignores_playoff_matches(monkeypatch, setup_database) -> None:
+    monkeypatch.setattr(
+        ranking_prediction_daemon,
+        "async_session_factory",
+        AsyncSessionLocal,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        ranking_prediction_daemon,
+        "_create_rng",
+        _seed_rng,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        ranking_prediction_daemon,
+        "SIMULATION_COUNT",
+        100,
+        raising=False,
+    )
+
+    event_key = "2025rankings-playoffs"
+
+    async def _run_test() -> None:
+        async with AsyncSessionLocal() as session:
+            org_id = await _create_common_setup(session, event_key, "Ranking Org")
+
+            session.add_all(
+                [
+                    TBAMatchData2025(
+                        event_key=event_key,
+                        match_number=1,
+                        match_level="qm",
+                        alliance=Alliance.RED,
+                        score=None,
+                    ),
+                    TBAMatchData2025(
+                        event_key=event_key,
+                        match_number=1,
+                        match_level="qm",
+                        alliance=Alliance.BLUE,
+                        score=None,
+                    ),
+                    RankingPredictionQueue(
+                        event_key=event_key,
+                        organization_id=org_id,
+                    ),
+                    MatchSchedule(
+                        event_key=event_key,
+                        match_number=2,
+                        match_level="sf",
+                        red1_id=1,
+                        red2_id=2,
+                        red3_id=3,
+                        blue1_id=4,
+                        blue2_id=5,
+                        blue3_id=6,
+                    ),
+                    TBAMatchData2025(
+                        event_key=event_key,
+                        match_number=2,
+                        match_level="sf",
+                        alliance=Alliance.RED,
+                        score=None,
+                    ),
+                    TBAMatchData2025(
+                        event_key=event_key,
+                        match_number=2,
+                        match_level="sf",
+                        alliance=Alliance.BLUE,
+                        score=None,
+                    ),
+                ]
+            )
+            await session.commit()
+
+        work_completed = await ranking_prediction_daemon.process_ranking_prediction_queue()
+        assert work_completed is True
+
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(RankingPredictions).where(
+                    RankingPredictions.event_key == event_key
+                )
+            )
+            rows = sorted(result.scalars().all(), key=lambda row: row.team_number)
+            assert len(rows) == 6
+
+            queue_result = await session.execute(select(RankingPredictionQueue))
+            assert queue_result.scalars().all() == []
+
+    asyncio.run(_run_test())
+
+
 def test_queue_entry_removed_when_no_matches(monkeypatch, setup_database) -> None:
     monkeypatch.setattr(
         ranking_prediction_daemon,

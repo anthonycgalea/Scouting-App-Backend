@@ -31,6 +31,11 @@ logger = logging.getLogger(__name__)
 SLEEP_INTERVAL_SECONDS = 20 * 60
 SIMULATION_COUNT = 10_000
 
+# Only qualification matches impact ranking point totals. Playoff matches
+# (quarterfinals, semifinals, finals, etc.) should not be considered when
+# simulating future rankings.
+QUALIFICATION_MATCH_LEVELS = {"qm"}
+
 
 @dataclass(frozen=True)
 class QueuedRankingPrediction:
@@ -185,9 +190,20 @@ async def _collect_simulation_inputs(
         MatchSchedule.event_key == event.event_key
     )
     schedule_result = await session.execute(schedule_stmt)
-    schedule_entries = list(schedule_result.scalars().all())
-    if not schedule_entries:
+    all_schedule_entries = list(schedule_result.scalars().all())
+    if not all_schedule_entries:
         raise IncompleteDataError("No match schedule data found for event.")
+
+    schedule_entries = [
+        entry
+        for entry in all_schedule_entries
+        if (entry.match_level or "").lower() in QUALIFICATION_MATCH_LEVELS
+    ]
+
+    if not schedule_entries:
+        raise NoUnplayedMatchesError(
+            f"No qualification matches remaining for event {event.event_key}."
+        )
 
     tba_stmt = select(tba_model).where(tba_model.event_key == event.event_key)
     tba_result = await session.execute(tba_stmt)

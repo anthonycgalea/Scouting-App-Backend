@@ -7,6 +7,7 @@ from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Optional
+from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, UploadFile, status
@@ -20,6 +21,7 @@ from app.services.event import (
     get_active_event_key_for_user,
     get_event_or_404,
     get_match_or_404,
+    require_lead_or_admin_membership,
 )
 from app.services.team import get_team_or_404
 from sqlmodel import SQLModel
@@ -272,3 +274,45 @@ async def list_match_team_images(
         )
         for team_number in team_order
     ]
+
+
+def _extract_s3_object_key(image_url: str) -> str:
+    """Return the S3 object key encoded within a stored image URL."""
+
+    parsed_url = urlparse(image_url)
+    object_key = parsed_url.path.lstrip("/")
+    if not object_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Stored image URL is invalid.",
+        )
+
+    return object_key
+
+
+async def delete_team_image(
+    session: AsyncSession,
+    image_id: UUID,
+    user: dict,
+) -> None:
+    """Remove a stored robot image from S3 and delete its database record."""
+
+    await require_lead_or_admin_membership(session, user)
+    event_key = await get_active_event_key_for_user(session, user)
+
+    record = await session.get(RobotEventImageLink, image_id)
+    if record is None or record.event_key != event_key:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
+
+    bucket = get_team_images_bucket()
+    object_key = _extract_s3_object_key(record.image_url)
+    s3_client = get_s3_client()
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(
+        None,
+        lambda: s3_client.delete_object(Bucket=bucket, Key=object_key),
+    )
+
+    await session.delete(record)
+    await session.commit()

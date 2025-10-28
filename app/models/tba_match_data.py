@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import Enum
+from typing import Optional
 
 from sqlmodel import Field, SQLModel
 
@@ -20,4 +21,5 @@ class TBAMatchData(SQLModel):
     match_number: int = Field(primary_key=True)
     match_level: str = Field(primary_key=True, max_length=50)
     alliance: Alliance = Field(primary_key=True)
+    rp: Optional[int]
     timestamp: datetime = Field(default_factory=datetime.now)

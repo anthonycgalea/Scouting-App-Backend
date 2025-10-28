@@ -9,9 +9,7 @@ from app.db.database import init_db
 from app.logging_config import configure_logging
 from app.services.match_prediction_daemon import (
     SLEEP_INTERVAL_SECONDS,
-    acquire_prediction_daemon_lock,
     process_prediction_queue,
-    release_prediction_daemon_lock,
 )
 
 configure_logging()
@@ -20,11 +18,6 @@ logger = logging.getLogger(__name__)
 
 async def _daemon_loop() -> None:
     """Continuously process queued match predictions."""
-
-    should_run, lock_connection = await acquire_prediction_daemon_lock()
-    if not should_run:
-        logger.info("Another match prediction daemon is already running; exiting.")
-        return
 
     logger.info("Match prediction daemon started.")
 
@@ -40,9 +33,6 @@ async def _daemon_loop() -> None:
     except asyncio.CancelledError:
         logger.info("Match prediction daemon cancelled; shutting down.")
         raise
-    finally:
-        if lock_connection is not None:
-            await release_prediction_daemon_lock(lock_connection)
 
 
 async def main() -> None:

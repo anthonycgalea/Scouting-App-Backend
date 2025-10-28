@@ -563,7 +563,7 @@ async def _calculate_combined_match_data(
 def _tba_matches_combined_data(
     event_year: int, tba_data: Dict[str, Any], combined_data: Dict[str, Any]
 ) -> bool:
-    ignored_fields_by_year: Dict[int, Set[str]] = {2025: {"net", "processor"}}
+    ignored_fields_by_year: Dict[int, Set[str]] = {2025: {"net", "processor", "score"}}
     ignored_fields = ignored_fields_by_year.get(event_year, set())
 
     for field, tba_value in tba_data.items():
@@ -1642,6 +1642,7 @@ async def update_tba_match_data_for_pending_alliances(
 
             match_data = response.json()
             score_breakdown = match_data.get("score_breakdown") or {}
+            alliances = match_data.get("alliances") or {}
 
             coopertition_met = False
             if isinstance(score_breakdown, dict):
@@ -1658,6 +1659,7 @@ async def update_tba_match_data_for_pending_alliances(
                 alliance_enum: Alliance = alliance_payload["alliance"]
                 color_key = alliance_enum.value.lower()
                 alliance_breakdown = score_breakdown.get(color_key)
+                alliance_info = alliances.get(color_key) or {}
                 parsed = _parse_tba_breakdown(
                     event.year,
                     alliance_breakdown,
@@ -1675,6 +1677,25 @@ async def update_tba_match_data_for_pending_alliances(
 
                 parsed["rp"] = rp_value
                 parsed["coop"] = 1 if coopertition_met else 0
+
+                score_value: Optional[int] = None
+                if isinstance(alliance_breakdown, dict):
+                    total_points_raw = alliance_breakdown.get("totalPoints")
+                    if total_points_raw is not None:
+                        try:
+                            score_value = int(total_points_raw)
+                        except (TypeError, ValueError):
+                            score_value = None
+
+                if score_value is None:
+                    score_raw = alliance_info.get("score")
+                    if score_raw is not None:
+                        try:
+                            score_value = int(score_raw)
+                        except (TypeError, ValueError):
+                            score_value = None
+
+                parsed["score"] = score_value
 
                 validations: List[DataValidation] = alliance_payload["validations"]
                 should_attempt_auto_validate = (

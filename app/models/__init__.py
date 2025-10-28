@@ -14,6 +14,7 @@ from .match_predictions_2025 import MatchPredictions2025
 from .organization import Organization
 from .organization_event import OrganizationEvent
 from .organization_feature_settings import OrganizationFeatureSettings
+from .ranking_predictions import RankingPredictions
 from .robot_event_image_link import RobotEventImageLink
 from .superscout_data import SuperScoutData
 from .superscout_data_2025 import SuperScoutData2025

@@ -13,7 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import async_session_factory
-from app.models import PredictionQueue
+from app.models import PredictionQueue, RankingPredictionQueue
 from app.services.match_prediction import simulate_match_prediction
 
 logger = logging.getLogger(__name__)
@@ -73,6 +73,40 @@ async def _mark_match_complete(session: AsyncSession, match: QueuedMatch) -> Non
     await session.commit()
 
 
+async def _enqueue_ranking_predictions(
+    session: AsyncSession,
+    *,
+    event_key: str,
+    organization_ids: Iterable[int],
+) -> None:
+    """Queue ranking predictions for organizations impacted by match simulations."""
+
+    unique_org_ids = {
+        int(org_id)
+        for org_id in organization_ids
+        if org_id is not None
+    }
+
+    if not unique_org_ids:
+        return
+
+    existing_statement = select(RankingPredictionQueue.organization_id).where(
+        RankingPredictionQueue.event_key == event_key,
+        RankingPredictionQueue.organization_id.in_(list(unique_org_ids)),
+    )
+    existing_result = await session.execute(existing_statement)
+    existing_org_ids = set(existing_result.scalars().all())
+
+    missing_org_ids = unique_org_ids - existing_org_ids
+    if not missing_org_ids:
+        return
+
+    session.add_all(
+        RankingPredictionQueue(event_key=event_key, organization_id=org_id)
+        for org_id in missing_org_ids
+    )
+
+
 async def process_prediction_queue() -> bool:
     """Process all queued matches once.
 
@@ -95,11 +129,16 @@ async def process_prediction_queue() -> bool:
                     match.match_level,
                     match.match_number,
                 )
-                await simulate_match_prediction(
+                results = await simulate_match_prediction(
                     session,
                     match.event_key,
                     match.match_level,
                     match.match_number,
+                )
+                await _enqueue_ranking_predictions(
+                    session,
+                    event_key=match.event_key,
+                    organization_ids=(results or {}).keys(),
                 )
                 await _mark_match_complete(session, match)
                 work_completed = True

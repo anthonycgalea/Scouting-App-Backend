@@ -67,6 +67,22 @@ jobs:
             screen -S 39086 -p 0 -X stuff $'source venv/bin/activate\n'
             screen -S 39086 -p 0 -X stuff $'python -m scripts.run_match_prediction_daemon\n'
 
+            echo "🔹 Restarting daily data sync daemon in screen 47270..."
+            if screen -list | grep -q "47270"; then
+              echo "  ➤ Stopping running process inside screen 47270"
+              screen -S 47270 -p 0 -X stuff $'\003'
+              sleep 5
+            else
+              echo "  ➤ Screen 47270 not found, creating it"
+              screen -dmS 47270
+              sleep 2
+            fi
+
+            echo "  ➤ Starting daily data sync daemon within screen 47270"
+            screen -S 47270 -p 0 -X stuff $'cd /opt/Scouting-App-Backend\n'
+            screen -S 47270 -p 0 -X stuff $'source venv/bin/activate\n'
+            screen -S 47270 -p 0 -X stuff $'python -m scripts.run_daily_data_sync_daemon\n'
+
             echo "🔹 Restarting ranking prediction daemon in screen 41003..."
             if screen -list | grep -q "41003"; then
               echo "  ➤ Stopping running process inside screen 41003"

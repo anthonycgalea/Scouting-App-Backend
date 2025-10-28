@@ -50,7 +50,6 @@ async def _load_queued_matches(session: AsyncSession) -> Iterable[QueuedMatch]:
         )
         .distinct()
         .order_by(PredictionQueue.match_number.asc())
-        .execution_options(compiled_cache=None) 
     )
     rows = result.all()
     return [

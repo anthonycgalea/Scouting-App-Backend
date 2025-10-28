@@ -27,6 +27,6 @@
       ],
       "jinja": true
     },
-     {"name":"Python Debugger: Match Predictions","type":"debugpy","request":"launch","module":"scripts.match_prediction_daemon"}
+     {"name":"Python Debugger: Match Predictions","type":"debugpy","request":"launch","module":"scripts.run_match_prediction_daemon"}
   ]
 }

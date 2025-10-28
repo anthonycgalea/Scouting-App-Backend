@@ -7,7 +7,17 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import AsyncIterator, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import (
+    Any,
+    AsyncIterator,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 import numpy as np
 from sqlalchemy import delete, select
@@ -213,15 +223,7 @@ async def _collect_simulation_inputs(
         for entry in tba_entries
     }
 
-    ranking_stmt = select(EventRankings).where(
-        EventRankings.event_key == event.event_key
-    )
-    ranking_result = await session.execute(ranking_stmt)
-    rankings = {
-        row.team_number: row for row in ranking_result.scalars().all()
-    }
-    if not rankings:
-        raise IncompleteDataError("Event rankings data is unavailable.")
+    rankings = _construct_current_rankings(event.event_key, schedule_entries, tba_map)
 
     matches: List[_MatchSimulationInput] = []
 
@@ -282,6 +284,86 @@ async def _collect_simulation_inputs(
         )
 
     return matches, rankings
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        if value is None:
+            return 0.0
+        return float(value)
+    except (TypeError, ValueError):  # pragma: no cover - defensive programming
+        return 0.0
+
+
+def _construct_current_rankings(
+    event_key: str,
+    schedule_entries: Sequence[MatchSchedule],
+    tba_map: Mapping[Tuple[str, int, Alliance], object],
+) -> Dict[int, EventRankings]:
+    team_totals: Dict[int, Dict[str, float]] = {}
+
+    for schedule in schedule_entries:
+        alliance_records = {
+            Alliance.RED: tba_map.get((schedule.match_level, schedule.match_number, Alliance.RED)),
+            Alliance.BLUE: tba_map.get((schedule.match_level, schedule.match_number, Alliance.BLUE)),
+        }
+
+        if not _match_is_played(alliance_records):
+            continue
+
+        for alliance, teams in (
+            (Alliance.RED, (schedule.red1_id, schedule.red2_id, schedule.red3_id)),
+            (Alliance.BLUE, (schedule.blue1_id, schedule.blue2_id, schedule.blue3_id)),
+        ):
+            record = alliance_records.get(alliance)
+            if record is None:
+                continue
+
+            rp_value = _safe_float(getattr(record, "rp", 0.0))
+            score_value = _safe_float(getattr(record, "score", 0.0))
+            coop_value = _safe_float(getattr(record, "coop", 0.0))
+
+            for team in teams:
+                totals = team_totals.setdefault(
+                    team,
+                    {
+                        "matches_played": 0.0,
+                        "ranking_points": 0.0,
+                        "score_total": 0.0,
+                        "coop_total": 0.0,
+                    },
+                )
+                totals["matches_played"] += 1
+                totals["ranking_points"] += rp_value
+                totals["score_total"] += score_value
+                totals["coop_total"] += coop_value
+
+    rankings: Dict[int, EventRankings] = {}
+
+    for team, totals in team_totals.items():
+        matches_played = int(totals["matches_played"])
+        average_score = (
+            totals["score_total"] / totals["matches_played"]
+            if totals["matches_played"]
+            else 0.0
+        )
+        average_coop = (
+            totals["coop_total"] / totals["matches_played"]
+            if totals["matches_played"]
+            else 0.0
+        )
+
+        rankings[team] = EventRankings(
+            event_key=event_key,
+            rank=0,
+            team_number=team,
+            ranking_points=int(round(totals["ranking_points"])),
+            matches_played=matches_played,
+            ranking_tiebreaker_1=average_score,
+            ranking_tiebreaker_2=average_coop,
+        )
+
+    return rankings
 
 
 def _compute_percentile(ranks: np.ndarray, percentile: float) -> int:

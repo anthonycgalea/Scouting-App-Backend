@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
+from datetime import datetime
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import pandas as pd
 from fastapi import HTTPException
@@ -11,6 +12,8 @@ from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import (
+    RankingPredictions,
+    TeamRecord,
     UserOrganization,
 )
 from ..event import (
@@ -208,6 +211,17 @@ class TeamMatchHistory(SQLModel):
 class EventTeamZScoreResponse(SQLModel):
     teams: List[TeamEventZScoreSummary]
     z_score_extremes: Dict[str, StatisticZScoreExtremes]
+
+
+class RankingPredictionResponse(SQLModel):
+    team_number: int
+    team_name: Optional[str] = None
+    rank_5: int
+    rank_95: int
+    median_rank: int
+    mean_rank: float
+    mean_rp: float
+    timestamp: datetime
 
 
 class HeadToHeadStatistic(SQLModel):
@@ -740,6 +754,52 @@ async def get_team_event_summary(
 
     summaries = _summarize_by_team(dataframe, scoring_config)
     return [TeamEventSummary(**row) for row in summaries]
+
+
+async def get_event_ranking_predictions(
+    session: AsyncSession,
+    user: object,
+) -> List[RankingPredictionResponse]:
+    user_payload = _normalize_user_payload(user)
+    event_key = await get_active_event_key_for_user(session, user_payload)
+    membership = await _get_membership(session, user_payload)
+
+    statement = (
+        select(RankingPredictions, TeamRecord.team_name)
+        .join(
+            TeamRecord,
+            TeamRecord.team_number == RankingPredictions.team_number,
+            isouter=True,
+        )
+        .where(
+            RankingPredictions.event_key == event_key,
+            RankingPredictions.organization_id == membership.organization_id,
+        )
+        .order_by(
+            RankingPredictions.median_rank,
+            RankingPredictions.team_number,
+        )
+    )
+
+    result = await session.execute(statement)
+    rows = result.all()
+
+    predictions: List[RankingPredictionResponse] = []
+    for prediction, team_name in rows:
+        predictions.append(
+            RankingPredictionResponse(
+                team_number=prediction.team_number,
+                team_name=team_name,
+                rank_5=prediction.rank_5,
+                rank_95=prediction.rank_95,
+                median_rank=prediction.median_rank,
+                mean_rank=prediction.mean_rank,
+                mean_rp=prediction.mean_rp,
+                timestamp=prediction.timestamp,
+            )
+        )
+
+    return predictions
 
 
 async def get_team_event_z_scores(

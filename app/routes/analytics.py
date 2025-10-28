@@ -7,10 +7,12 @@ from app.auth.dependencies import get_current_user
 from app.db.database import get_session
 from app.services.analytics.event_summary import (
     EventTeamZScoreResponse,
+    RankingPredictionResponse,
     TeamEventDetailedSummary,
     TeamHeadToHeadStatistics,
     TeamEventSummary,
     TeamMatchHistory,
+    get_event_ranking_predictions,
     get_team_event_detailed_summary,
     get_team_event_head_to_head,
     get_team_event_match_history,
@@ -30,6 +32,17 @@ async def summarize_event_by_team(
     session: AsyncSession = Depends(get_session),
 ):
     return await get_team_event_summary(session, user)
+
+
+@router.get(
+    "/event/rankings/prediction",
+    response_model=List[RankingPredictionResponse],
+)
+async def get_event_ranking_prediction(
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await get_event_ranking_predictions(session, user)
 
 
 @router.get(

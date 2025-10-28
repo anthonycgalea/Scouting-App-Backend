@@ -119,18 +119,21 @@ async def _prepare_event_images_data():
                 team_number=team_one.team_number,
                 event_key=event.event_key,
                 image_url="https://cdn.example.com/team1111-latest.jpg",
+                description="Latest robot image",
                 uploaded_at=image_time,
             ),
             RobotEventImageLink(
                 team_number=team_one.team_number,
                 event_key=event.event_key,
                 image_url="https://cdn.example.com/team1111-older.jpg",
+                description=None,
                 uploaded_at=image_time - timedelta(minutes=10),
             ),
             RobotEventImageLink(
                 team_number=team_two.team_number,
                 event_key=event.event_key,
                 image_url="https://cdn.example.com/team2222.jpg",
+                description="Team 2222 robot",
                 uploaded_at=image_time,
             ),
             RobotEventImageLink(
@@ -199,17 +202,25 @@ def test_event_images_endpoint_returns_grouped_links(event_images_client):
 
     expected = {
         data["team_one"]: [
-            "https://cdn.example.com/team1111-latest.jpg",
-            "https://cdn.example.com/team1111-older.jpg",
+            ("https://cdn.example.com/team1111-latest.jpg", "Latest robot image"),
+            ("https://cdn.example.com/team1111-older.jpg", None),
         ],
-        data["team_two"]: ["https://cdn.example.com/team2222.jpg"],
+        data["team_two"]: [("https://cdn.example.com/team2222.jpg", "Team 2222 robot")],
     }
 
     for entry in payload:
-        assert entry["images"] == expected[entry["teamNumber"]]
+        images = entry["images"]
+        assert [image["image_url"] for image in images] == [
+            item[0] for item in expected[entry["teamNumber"]]
+        ]
+        assert [image.get("description") for image in images] == [
+            item[1] for item in expected[entry["teamNumber"]]
+        ]
+        for image in images:
+            assert "id" in image and isinstance(image["id"], str)
 
     assert "https://cdn.example.com/team1111-other-event.jpg" not in {
-        image for entry in payload for image in entry["images"]
+        image["image_url"] for entry in payload for image in entry["images"]
     }
 
 
@@ -237,11 +248,21 @@ def test_match_images_endpoint_includes_teams_without_images(event_images_client
 
     images_by_team = {entry["teamNumber"]: entry["images"] for entry in payload}
 
-    assert images_by_team[data["team_one"]] == [
+    assert [
+        image["image_url"] for image in images_by_team[data["team_one"]]
+    ] == [
         "https://cdn.example.com/team1111-latest.jpg",
         "https://cdn.example.com/team1111-older.jpg",
     ]
-    assert images_by_team[data["team_two"]] == ["https://cdn.example.com/team2222.jpg"]
+    assert [
+        image.get("description") for image in images_by_team[data["team_one"]]
+    ] == ["Latest robot image", None]
+    assert [
+        image["image_url"] for image in images_by_team[data["team_two"]]
+    ] == ["https://cdn.example.com/team2222.jpg"]
+    assert [
+        image.get("description") for image in images_by_team[data["team_two"]]
+    ] == ["Team 2222 robot"]
     assert images_by_team[data["team_without_images"]] == []
     assert images_by_team[4444] == []
     assert images_by_team[5555] == []

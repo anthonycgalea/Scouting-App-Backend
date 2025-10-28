@@ -470,6 +470,25 @@ async def _persist_event_tba_matches(
             parsed_breakdown["rp"] = rp_value
             parsed_breakdown["coop"] = 1 if coopertition_met else 0
 
+            score_value: Optional[int] = None
+            if isinstance(alliance_breakdown, dict):
+                total_points_raw = alliance_breakdown.get("totalPoints")
+                if total_points_raw is not None:
+                    try:
+                        score_value = int(total_points_raw)
+                    except (TypeError, ValueError):
+                        score_value = None
+
+            if score_value is None:
+                score_raw = alliance_info.get("score")
+                if score_raw is not None:
+                    try:
+                        score_value = int(score_raw)
+                    except (TypeError, ValueError):
+                        score_value = None
+
+            parsed_breakdown["score"] = score_value
+
             statement = select(tba_model).where(
                 tba_model.event_key == event_key,
                 tba_model.match_number == match_number,

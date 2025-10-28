@@ -5,6 +5,7 @@ import pytest
 from sqlmodel import select
 
 from app.models import (
+    Alliance,
     DataValidation,
     Endgame2025,
     FRCEvent,
@@ -13,6 +14,7 @@ from app.models import (
     Organization,
     OrganizationEvent,
     Season,
+    TBAMatchData2025,
     TeamRecord,
     User,
     UserOrganization,
@@ -62,6 +64,7 @@ class _DummyAsyncClient:
                         },
                         "netAlgaeCount": 12,
                         "wallAlgaeCount": 34,
+                        "totalPoints": 123,
                         "endGameRobot1": "DeepCage",
                         "endGameRobot2": "Parked",
                         "endGameRobot3": None,
@@ -92,6 +95,7 @@ class _DummyAsyncClientParkNone(_DummyAsyncClient):
                         },
                         "netAlgaeCount": 12,
                         "wallAlgaeCount": 34,
+                        "totalPoints": 123,
                         "endGameRobot1": "DeepCage",
                         "endGameRobot2": None,
                         "endGameRobot3": None,
@@ -238,6 +242,18 @@ async def test_alliance_validations_marked_valid_when_tba_matches(monkeypatch):
         assert len(validations) == 3
         assert all(v.validation_status == ValidationStatus.VALID for v in validations)
         assert result["updated_validations"] == 3
+
+        tba_result = await session.execute(
+            select(TBAMatchData2025).where(
+                TBAMatchData2025.event_key == event.event_key,
+                TBAMatchData2025.match_level == "qm",
+                TBAMatchData2025.match_number == 1,
+                TBAMatchData2025.alliance == Alliance.RED,
+            )
+        )
+        red_record = tba_result.scalars().first()
+        assert red_record is not None
+        assert red_record.score == 123
 
 
 @pytest.mark.asyncio

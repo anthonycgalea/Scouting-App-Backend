@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
+from uuid import UUID
 
 from app.auth.dependencies import get_current_user
 from app.db.database import get_session
@@ -9,6 +11,7 @@ from app.services.team import (
 )
 from app.services.team_media import (
     RobotEventImageLinkResponse,
+    delete_team_image,
     list_team_images,
     upload_team_image,
 )
@@ -17,6 +20,12 @@ router = APIRouter(
     prefix="/teams",
     tags=["Team"],
 )
+
+
+class TeamImageDeleteRequest(BaseModel):
+    """Payload for deleting a stored team image."""
+
+    id: UUID
 
 
 @router.get("/{teamNumber}/info")
@@ -64,3 +73,15 @@ async def list_team_images_endpoint(
     session: AsyncSession = Depends(get_session),
 ):
     return await list_team_images(session, teamNumber, user)
+
+
+@router.delete(
+    "/image",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_team_image_endpoint(
+    payload: TeamImageDeleteRequest,
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await delete_team_image(session=session, image_id=payload.id, user=user)

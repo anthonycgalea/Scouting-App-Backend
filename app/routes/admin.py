@@ -235,16 +235,19 @@ async def import_event_registration(year: int, session: AsyncSession = Depends(g
         # 3. Process each event and prepare async team fetches
         team_fetch_tasks = {}
         for event in events_data:
-            if event["event_type"] in [99, 100]:
+            event_type = event["event_type"]
+            if event_type == 100:
                 continue  # skip off-season events
 
             event_key = str(event["key"])
             event_name = str(event["name"])
             short_name = str(event["short_name"])
-            if year < 2026:
-                week = 8 if event["event_type"] in [3, 4] else int(event["week"] + 1)
+            if event_type == 99:
+                week = 99
+            elif year < 2026:
+                week = 8 if event_type in [3, 4] else int(event["week"] + 1)
             else:
-                week = 9 if event["event_type"] in [3, 4] else int(event["week"] + 1)
+                week = 9 if event_type in [3, 4] else int(event["week"] + 1)
             year_event = int(event_key[:4])
 
             # Add or update FRCEvent

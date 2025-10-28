@@ -435,6 +435,17 @@ async def _persist_event_tba_matches(
         ):
             continue
 
+        coopertition_met = False
+        if isinstance(breakdown, dict):
+            red_breakdown = breakdown.get("red")
+            blue_breakdown = breakdown.get("blue")
+            coopertition_met = bool(
+                isinstance(red_breakdown, dict)
+                and isinstance(blue_breakdown, dict)
+                and red_breakdown.get("coopertitionCriteriaMet")
+                and blue_breakdown.get("coopertitionCriteriaMet")
+            )
+
         for color_key, alliance_enum in (("red", Alliance.RED), ("blue", Alliance.BLUE)):
             alliance_info = alliances.get(color_key) or {}
             team_keys = alliance_info.get("team_keys") or []
@@ -445,6 +456,19 @@ async def _persist_event_tba_matches(
                 breakdown.get(color_key),
                 team_numbers,
             )
+
+            alliance_breakdown = breakdown.get(color_key)
+            rp_value: Optional[int] = None
+            if isinstance(alliance_breakdown, dict):
+                rp_raw = alliance_breakdown.get("rp")
+                if rp_raw is not None:
+                    try:
+                        rp_value = int(rp_raw)
+                    except (TypeError, ValueError):
+                        rp_value = None
+
+            parsed_breakdown["rp"] = rp_value
+            parsed_breakdown["coop"] = 1 if coopertition_met else 0
 
             statement = select(tba_model).where(
                 tba_model.event_key == event_key,

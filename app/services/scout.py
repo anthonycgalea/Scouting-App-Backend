@@ -1643,6 +1643,17 @@ async def update_tba_match_data_for_pending_alliances(
             match_data = response.json()
             score_breakdown = match_data.get("score_breakdown") or {}
 
+            coopertition_met = False
+            if isinstance(score_breakdown, dict):
+                red_breakdown = score_breakdown.get("red")
+                blue_breakdown = score_breakdown.get("blue")
+                coopertition_met = bool(
+                    isinstance(red_breakdown, dict)
+                    and isinstance(blue_breakdown, dict)
+                    and red_breakdown.get("coopertitionCriteriaMet")
+                    and blue_breakdown.get("coopertitionCriteriaMet")
+                )
+
             for alliance_payload in match_payload["alliances"]:
                 alliance_enum: Alliance = alliance_payload["alliance"]
                 color_key = alliance_enum.value.lower()
@@ -1652,6 +1663,18 @@ async def update_tba_match_data_for_pending_alliances(
                     alliance_breakdown,
                     alliance_payload["teams"],
                 )
+
+                rp_value: Optional[int] = None
+                if isinstance(alliance_breakdown, dict):
+                    rp_raw = alliance_breakdown.get("rp")
+                    if rp_raw is not None:
+                        try:
+                            rp_value = int(rp_raw)
+                        except (TypeError, ValueError):
+                            rp_value = None
+
+                parsed["rp"] = rp_value
+                parsed["coop"] = 1 if coopertition_met else 0
 
                 validations: List[DataValidation] = alliance_payload["validations"]
                 should_attempt_auto_validate = (

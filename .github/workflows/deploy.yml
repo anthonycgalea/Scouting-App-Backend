@@ -67,5 +67,21 @@ jobs:
             screen -S 39086 -p 0 -X stuff $'source venv/bin/activate\n'
             screen -S 39086 -p 0 -X stuff $'python -m scripts.run_match_prediction_daemon\n'
 
+            echo "🔹 Restarting ranking prediction daemon in screen 41003..."
+            if screen -list | grep -q "41003"; then
+              echo "  ➤ Stopping running process inside screen 41003"
+              screen -S 41003 -p 0 -X stuff $'\003'
+              sleep 5
+            else
+              echo "  ➤ Screen 41003 not found, creating it"
+              screen -dmS 41003
+              sleep 2
+            fi
+
+            echo "  ➤ Starting ranking prediction daemon within screen 41003"
+            screen -S 41003 -p 0 -X stuff $'cd /opt/Scouting-App-Backend\n'
+            screen -S 41003 -p 0 -X stuff $'source venv/bin/activate\n'
+            screen -S 41003 -p 0 -X stuff $'python -m scripts.run_ranking_prediction_daemon\n'
+
             echo "✅ Deployment complete."
           EOF

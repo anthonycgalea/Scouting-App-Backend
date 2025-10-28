@@ -986,13 +986,17 @@ async def get_event_list_or_404(session: AsyncSession, year: int) -> List[EventR
         FRCEvent.year == year
     )
     result = await session.execute(statement)
-    return [EventResponse(
-        event_key=ev.event_key,
-        event_name=ev.event_name,
-        short_name=ev.short_name,
-        year=ev.year,
-        week=ev.week
-    ) for ev in result.scalars().all()]
+    events = result.scalars().all()
+    return [
+        EventResponse(
+            event_key=ev.event_key,
+            event_name=ev.event_name,
+            short_name=ev.short_name or ev.event_name,
+            year=ev.year,
+            week=ev.week,
+        )
+        for ev in events
+    ]
 
 
 async def get_public_organizations_for_event(session: AsyncSession, eventCode: str) -> List[Organization]:

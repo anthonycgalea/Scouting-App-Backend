@@ -50,11 +50,19 @@ class RobotEventImageLinkResponse(SQLModel):
     uploaded_at: datetime
 
 
+class EventTeamImageSummaryResponse(BaseModel):
+    """Summary information for an individual team robot image."""
+
+    id: UUID
+    image_url: str
+    description: Optional[str] = None
+
+
 class EventTeamImagesResponse(BaseModel):
     """Response DTO for grouped team robot images at an event."""
 
     teamNumber: int
-    images: list[str]
+    images: list[EventTeamImageSummaryResponse]
 
 
 async def _ensure_team_and_event(session: AsyncSession, team_number: int, event_key: str) -> None:
@@ -196,7 +204,9 @@ async def list_event_team_images(
     statement = (
         select(
             RobotEventImageLink.team_number,
+            RobotEventImageLink.id,
             RobotEventImageLink.image_url,
+            RobotEventImageLink.description,
         )
         .where(RobotEventImageLink.event_key == event_key)
         .order_by(
@@ -207,9 +217,15 @@ async def list_event_team_images(
 
     result = await session.execute(statement)
 
-    grouped_images: dict[int, list[str]] = {}
-    for team_number, image_url in result.all():
-        grouped_images.setdefault(team_number, []).append(image_url)
+    grouped_images: dict[int, list[EventTeamImageSummaryResponse]] = {}
+    for team_number, image_id, image_url, description in result.all():
+        grouped_images.setdefault(team_number, []).append(
+            EventTeamImageSummaryResponse(
+                id=image_id,
+                image_url=image_url,
+                description=description,
+            )
+        )
 
     return [
         EventTeamImagesResponse(teamNumber=team_number, images=images)
@@ -249,7 +265,9 @@ async def list_match_team_images(
     statement = (
         select(
             RobotEventImageLink.team_number,
+            RobotEventImageLink.id,
             RobotEventImageLink.image_url,
+            RobotEventImageLink.description,
         )
         .where(
             RobotEventImageLink.event_key == event_key,
@@ -263,9 +281,17 @@ async def list_match_team_images(
 
     result = await session.execute(statement)
 
-    grouped_images: dict[int, list[str]] = {team_number: [] for team_number in team_order}
-    for team_number, image_url in result.all():
-        grouped_images.setdefault(team_number, []).append(image_url)
+    grouped_images: dict[int, list[EventTeamImageSummaryResponse]] = {
+        team_number: [] for team_number in team_order
+    }
+    for team_number, image_id, image_url, description in result.all():
+        grouped_images.setdefault(team_number, []).append(
+            EventTeamImageSummaryResponse(
+                id=image_id,
+                image_url=image_url,
+                description=description,
+            )
+        )
 
     return [
         EventTeamImagesResponse(

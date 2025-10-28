@@ -22,4 +22,5 @@ class TBAMatchData(SQLModel):
     match_level: str = Field(primary_key=True, max_length=50)
     alliance: Alliance = Field(primary_key=True)
     rp: Optional[int]
+    score: Optional[int]
     timestamp: datetime = Field(default_factory=datetime.now)

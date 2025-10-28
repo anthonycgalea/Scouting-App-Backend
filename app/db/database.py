@@ -85,6 +85,7 @@ def create_engine_from_url(
 
 
 DATABASE_URL = _normalize_database_url(os.getenv("DB_URL"))  # Add to your .env
+#DATABASE_URL = _normalize_database_url(os.getenv("ALEMBIC_DB_URL"))  # uncomment when doing migrations
 
 engine: AsyncEngine = create_engine_from_url(
     DATABASE_URL,

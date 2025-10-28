@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Optional
 
 from sqlmodel import Field
 
@@ -35,3 +36,6 @@ class TBAMatchData2025(TBAMatchData, table=True):
     bot1endgame: Endgame2025 = Field(default=Endgame2025.NONE)
     bot2endgame: Endgame2025 = Field(default=Endgame2025.NONE)
     bot3endgame: Endgame2025 = Field(default=Endgame2025.NONE)
+
+    #ranking data
+    coop: Optional[int]

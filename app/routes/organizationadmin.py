@@ -10,6 +10,7 @@ import csv
 import io
 import json
 from html import escape
+from types import SimpleNamespace
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 from uuid import UUID
 
@@ -170,6 +171,7 @@ from app.services.event import (
     require_lead_or_admin_membership,
     serialize_match_data_for_export,
 )
+from app.services.scout import _enqueue_unplayed_matches_for_prediction_queue
 from app.services.match_prediction import MATCH_PREDICTION_MODELS_BY_YEAR
 
 class CreateOrgEventCommand(SQLModel):
@@ -1207,6 +1209,8 @@ async def upload_match_data(
             detail="Only organization admins or leads can upload match data",
         )
 
+    organization_id = int(membership.organization_id)
+
     file_bytes = await file.read()
     if not file_bytes:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
@@ -1243,6 +1247,7 @@ async def upload_match_data(
     processed = 0
     created = 0
     updated = 0
+    matches_for_queue: Set[Tuple[int, str, int]] = set()
 
     value_headers: Dict[str, str] = {
         column: header if isinstance(header, str) else ""
@@ -1307,7 +1312,7 @@ async def upload_match_data(
             "match_number": match_number,
             "match_level": match_level,
             "user_id": user_id,
-            "organization_id": membership.organization_id,
+            "organization_id": organization_id,
             "notes": notes_value,
             "timestamp": datetime.now(),
             "al4c": parse_int(get_row_value("al4c")),
@@ -1346,9 +1351,22 @@ async def upload_match_data(
             session.add(match_data)
             created += 1
 
+        matches_for_queue.add((team_number, event_key, organization_id))
         processed += 1
 
     await session.commit()
+
+    for team_number, event_key, queued_organization_id in matches_for_queue:
+        match_stub = SimpleNamespace(
+            team_number=team_number,
+            event_key=event_key,
+            organization_id=queued_organization_id,
+        )
+        await _enqueue_unplayed_matches_for_prediction_queue(
+            session,
+            match_stub,
+            MatchData2025,
+        )
 
     return {
         "status": "success",

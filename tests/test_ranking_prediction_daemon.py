@@ -28,6 +28,43 @@ def _seed_rng() -> np.random.Generator:
     return np.random.default_rng(42)
 
 
+def test_simulate_rankings_percentiles_are_not_flipped(monkeypatch) -> None:
+    recorded_percentiles = []
+
+    def _fake_percentile(ranks, percentile):  # type: ignore[override]
+        recorded_percentiles.append(percentile)
+        return int(percentile)
+
+    monkeypatch.setattr(
+        ranking_prediction_daemon,
+        "_compute_percentile",
+        _fake_percentile,
+        raising=False,
+    )
+
+    rankings = {
+        1: EventRankings(
+            event_key="test",
+            rank=1,
+            team_number=1,
+            ranking_points=0,
+            matches_played=0,
+            ranking_tiebreaker_1=0.0,
+            ranking_tiebreaker_2=0.0,
+        )
+    }
+
+    statistics = ranking_prediction_daemon._simulate_rankings(
+        matches=[],
+        rankings=rankings,
+        n_simulations=1,
+    )
+
+    assert statistics[1]["rank_5"] == 95
+    assert statistics[1]["rank_95"] == 5
+    assert recorded_percentiles == [95, 5]
+
+
 async def _create_common_setup(session, event_key: str, organization_name: str) -> int:
     season_stmt = select(Season).where(Season.year == 2025)
     season_result = await session.execute(season_stmt)

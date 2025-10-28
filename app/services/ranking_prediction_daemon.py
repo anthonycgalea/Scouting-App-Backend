@@ -473,8 +473,12 @@ def _simulate_rankings(
         idx = team_to_index[team]
         team_ranks = ranks[:, idx]
         statistics[team] = {
-            "rank_5": float(_compute_percentile(team_ranks, 5)),
-            "rank_95": float(_compute_percentile(team_ranks, 95)),
+            # rank_5 represents the worst-case outcome (95th percentile) while
+            # rank_95 reflects the best-case outcome (5th percentile). This aligns
+            # with how the values are displayed to users, ensuring the percentile
+            # labels are not inverted.
+            "rank_5": float(_compute_percentile(team_ranks, 95)),
+            "rank_95": float(_compute_percentile(team_ranks, 5)),
             "median_rank": float(_compute_median_rank(team_ranks)),
             "mean_rank": float(np.mean(team_ranks)),
             "mean_rp": float(np.mean(rp_totals[:, idx])),

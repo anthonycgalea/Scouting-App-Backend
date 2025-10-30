@@ -168,10 +168,11 @@ async def import_event_registration(year: int, session: AsyncSession) -> Dict[st
 
     for event in events_data:
         event_type = event.get("event_type")
-        if event_type == 100:
+        event_key = str(event["key"])
+
+        if event_type == 100 and event_key != f"{year}week0":
             continue
 
-        event_key = str(event["key"])
         event_name = str(event["name"])
         short_name = str(event["short_name"])
 

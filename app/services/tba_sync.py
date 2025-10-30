@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models import FRCEvent, TeamEvent, TeamRecord
+from app.models import FRCEvent, OrganizationEvent, TeamEvent, TeamRecord
 
 load_dotenv()
 
@@ -113,6 +113,25 @@ async def _fetch_event_teams(event_key: str, headers: Dict[str, str]) -> List[di
             return response.json()
 
 
+async def _apply_team_registration_updates(
+    session: AsyncSession, event_key: str, teams_data: List[dict]
+) -> None:
+    statement_teams = select(TeamEvent).where(TeamEvent.event_key == event_key)
+    result_teams = await session.exec(statement_teams)
+    existing_team_events = {te.team_number: te for te in result_teams.all()}
+
+    current_teams: Set[int] = set()
+    for team in teams_data:
+        team_number = int(team["team_number"])
+        current_teams.add(team_number)
+        if team_number not in existing_team_events:
+            session.add(TeamEvent(event_key=event_key, team_number=team_number))
+
+    for team_number, team_event in existing_team_events.items():
+        if team_number not in current_teams:
+            await session.delete(team_event)
+
+
 async def import_event_registration(year: int, session: AsyncSession) -> Dict[str, object]:
     """Synchronise event registrations for the specified ``year``."""
 
@@ -135,6 +154,15 @@ async def import_event_registration(year: int, session: AsyncSession) -> Dict[st
     statement = select(FRCEvent)
     result = await session.exec(statement)
     existing_events = {event.event_key: event for event in result.all()}
+
+    org_event_stmt = select(OrganizationEvent.event_key)
+    org_event_result = await session.exec(org_event_stmt)
+    year_prefix = str(year)
+    organization_event_keys = {
+        event_key
+        for event_key in org_event_result.all()
+        if str(event_key).startswith(year_prefix)
+    }
 
     team_fetch_tasks: Dict[str, asyncio.Task[List[dict]]] = {}
 
@@ -174,37 +202,58 @@ async def import_event_registration(year: int, session: AsyncSession) -> Dict[st
             session.add(new_event)
             existing_events[event_key] = new_event
 
-        team_fetch_tasks[event_key] = asyncio.create_task(
-            _fetch_event_teams(event_key, headers)
-        )
+        if event_key in organization_event_keys:
+            team_fetch_tasks[event_key] = asyncio.create_task(
+                _fetch_event_teams(event_key, headers)
+            )
 
-    all_team_results = await asyncio.gather(*team_fetch_tasks.values())
-    event_keys = list(team_fetch_tasks.keys())
+    event_keys: List[str] = []
+    if team_fetch_tasks:
+        all_team_results = await asyncio.gather(*team_fetch_tasks.values())
+        event_keys = list(team_fetch_tasks.keys())
 
-    for idx, event_key in enumerate(event_keys):
-        teams_data = all_team_results[idx]
-
-        statement_teams = select(TeamEvent).where(TeamEvent.event_key == event_key)
-        result_teams = await session.exec(statement_teams)
-        existing_team_events = {te.team_number: te for te in result_teams.all()}
-
-        current_teams: Set[int] = set()
-        for team in teams_data:
-            team_number = int(team["team_number"])
-            current_teams.add(team_number)
-            if team_number not in existing_team_events:
-                session.add(TeamEvent(event_key=event_key, team_number=team_number))
-
-        for team_number, team_event in existing_team_events.items():
-            if team_number not in current_teams:
-                await session.delete(team_event)
+        for idx, event_key in enumerate(event_keys):
+            teams_data = all_team_results[idx]
+            await _apply_team_registration_updates(session, event_key, teams_data)
 
     await session.commit()
 
     logger.info(
-        "Imported registrations for %d events in %s.",
-        len(events_data),
+        "Imported registrations for %d organization events in %s.",
+        len(event_keys),
         year,
     )
 
-    return {"status": "success", "year": year, "events_processed": len(events_data)}
+    return {
+        "status": "success",
+        "year": year,
+        "events_processed": len(event_keys),
+    }
+
+
+async def import_event_registration_for_event(
+    event_key: str, session: AsyncSession, *, commit: bool = True
+) -> Dict[str, object]:
+    """Synchronise registration data for a single event."""
+
+    if not TBA_API_KEY:
+        raise TBASyncError("TBA_API_KEY environment variable is not configured.")
+
+    headers = {"X-TBA-Auth-Key": TBA_API_KEY, "accept": "application/json"}
+    teams_data = await _fetch_event_teams(event_key, headers)
+    await _apply_team_registration_updates(session, event_key, teams_data)
+
+    if commit:
+        await session.commit()
+
+    logger.info(
+        "Imported registrations for event %s with %d teams.",
+        event_key,
+        len(teams_data),
+    )
+
+    return {
+        "status": "success",
+        "event_key": event_key,
+        "teams_processed": len(teams_data),
+    }

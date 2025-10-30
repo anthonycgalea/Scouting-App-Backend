@@ -4,6 +4,10 @@ from sqlmodel import SQLModel, delete, select, update
 from datetime import datetime
 from app.auth.dependencies import get_current_user
 from app.db.database import get_session
+from app.services.tba_sync import (
+    TBASyncError,
+    import_event_registration_for_event,
+)
 from dotenv import load_dotenv
 import os, httpx
 import csv
@@ -1033,6 +1037,19 @@ async def createOrganizationEvent(
             .values(active=False)
         )
         await session.exec(deactivate_statement)
+
+    try:
+        await import_event_registration_for_event(
+            newOrgEvent.event_key,
+            session,
+            commit=False,
+        )
+    except (TBASyncError, httpx.HTTPError) as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to synchronise registration data for the event",
+        ) from exc
 
     await session.commit()
     await session.refresh(newOrgEvent)

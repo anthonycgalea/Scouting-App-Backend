@@ -99,5 +99,21 @@ jobs:
             screen -S 41003 -p 0 -X stuff $'source venv/bin/activate\n'
             screen -S 41003 -p 0 -X stuff $'python -m scripts.run_ranking_prediction_daemon\n'
 
+            echo "🔹 Restarting TBA update daemon in screen 78874..."
+            if screen -list | grep -q "78874"; then
+              echo "  ➤ Stopping running process inside screen 78874"
+              screen -S 78874 -p 0 -X stuff $'\003'
+              sleep 5
+            else
+              echo "  ➤ Screen 78874 not found, creating it"
+              screen -dmS 78874
+              sleep 2
+            fi
+
+            echo "  ➤ Starting TBA update daemon within screen 78874"
+            screen -S 78874 -p 0 -X stuff $'cd /opt/Scouting-App-Backend\n'
+            screen -S 78874 -p 0 -X stuff $'source venv/bin/activate\n'
+            screen -S 78874 -p 0 -X stuff $'python -m scripts.run_tba_update_daemon\n'
+
             echo "✅ Deployment complete."
           EOF

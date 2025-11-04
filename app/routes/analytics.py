@@ -18,6 +18,8 @@ from app.services.analytics.event_summary import (
     get_team_event_match_history,
     get_team_event_summary,
     get_team_event_z_scores,
+    get_team_prescout_detailed_summary,
+    get_team_prescout_summary,
 )
 
 router = APIRouter(
@@ -32,6 +34,14 @@ async def summarize_event_by_team(
     session: AsyncSession = Depends(get_session),
 ):
     return await get_team_event_summary(session, user)
+
+
+@router.get("/prescout/teams", response_model=List[TeamEventSummary])
+async def summarize_prescout_by_team(
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await get_team_prescout_summary(session, user)
 
 
 @router.get(
@@ -54,6 +64,17 @@ async def summarize_event_by_team_detailed(
     session: AsyncSession = Depends(get_session),
 ):
     return await get_team_event_detailed_summary(session, user)
+
+
+@router.get(
+    "/prescout/teams/detailed",
+    response_model=List[TeamEventDetailedSummary],
+)
+async def summarize_prescout_by_team_detailed(
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await get_team_prescout_detailed_summary(session, user)
 
 
 @router.get(

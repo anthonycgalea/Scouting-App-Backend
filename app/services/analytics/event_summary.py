@@ -12,6 +12,8 @@ from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import (
+    MatchData,
+    Prescout2025,
     RankingPredictions,
     TeamRecord,
     UserOrganization,
@@ -22,6 +24,11 @@ from ..event import (
     get_event_or_404,
     get_scouting_alliance_organization_ids,
 )
+
+
+PRESCOUT_MODELS_BY_YEAR: Mapping[int, type[MatchData]] = {
+    2025: Prescout2025,
+}
 
 
 @dataclass(frozen=True)
@@ -697,15 +704,19 @@ def _summarize_head_to_head_by_team(
 
 
 async def _load_event_dataframe(
-    session: AsyncSession, user_payload: Dict[str, object]
+    session: AsyncSession,
+    user_payload: Dict[str, object],
+    *,
+    record_models: Mapping[int, type[MatchData]] = MATCH_DATA_MODELS_BY_YEAR,
+    missing_data_detail: str = "Match data is not available for this event",
 ) -> Tuple[pd.DataFrame, YearlyScoringConfig]:
     event_key = await get_active_event_key_for_user(session, user_payload)
     event = await get_event_or_404(session, event_key)
     membership = await _get_membership(session, user_payload)
 
-    match_model = MATCH_DATA_MODELS_BY_YEAR.get(event.year)
+    match_model = record_models.get(event.year)
     if match_model is None:
-        raise HTTPException(status_code=404, detail="Match data is not available for this event")
+        raise HTTPException(status_code=404, detail=missing_data_detail)
 
     scoring_config = SCORING_CONFIGS.get(event.year)
     if (
@@ -748,6 +759,25 @@ async def get_team_event_summary(
 ) -> List[TeamEventSummary]:
     user_payload = _normalize_user_payload(user)
     dataframe, scoring_config = await _load_event_dataframe(session, user_payload)
+
+    if dataframe.empty:
+        return []
+
+    summaries = _summarize_by_team(dataframe, scoring_config)
+    return [TeamEventSummary(**row) for row in summaries]
+
+
+async def get_team_prescout_summary(
+    session: AsyncSession,
+    user: object,
+) -> List[TeamEventSummary]:
+    user_payload = _normalize_user_payload(user)
+    dataframe, scoring_config = await _load_event_dataframe(
+        session,
+        user_payload,
+        record_models=PRESCOUT_MODELS_BY_YEAR,
+        missing_data_detail="Prescout data is not available for this event",
+    )
 
     if dataframe.empty:
         return []
@@ -860,6 +890,24 @@ async def get_team_event_detailed_summary(
 ) -> List[TeamEventDetailedSummary]:
     user_payload = _normalize_user_payload(user)
     dataframe, scoring_config = await _load_event_dataframe(session, user_payload)
+
+    if dataframe.empty:
+        return []
+
+    return _summarize_detailed_by_team(dataframe, scoring_config)
+
+
+async def get_team_prescout_detailed_summary(
+    session: AsyncSession,
+    user: object,
+) -> List[TeamEventDetailedSummary]:
+    user_payload = _normalize_user_payload(user)
+    dataframe, scoring_config = await _load_event_dataframe(
+        session,
+        user_payload,
+        record_models=PRESCOUT_MODELS_BY_YEAR,
+        missing_data_detail="Prescout data is not available for this event",
+    )
 
     if dataframe.empty:
         return []

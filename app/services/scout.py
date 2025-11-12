@@ -23,8 +23,9 @@ import httpx
 from datetime import datetime
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, tuple_
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import load_only
 from sqlmodel import SQLModel, delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from uuid import UUID
@@ -1535,28 +1536,58 @@ async def delete_pit_scout_record(
 async def update_tba_match_data_for_pending_alliances(
     session: AsyncSession,
     user: dict,
+    *,
+    membership_override: Optional[UserOrganization] = None,
+    event_key_override: Optional[str] = None,
+    event_year_override: Optional[int] = None,
+    alliance_ids_override: Optional[Sequence[int]] = None,
 ) -> Dict[str, Any]:
-    event_key = await get_active_event_key_for_user(session, user)
-    event = await get_event_or_404(session, event_key)
-
     membership_id = user.get("user_org")
-    if membership_id is None:
+    if membership_id is None and membership_override is None:
         raise HTTPException(status_code=404, detail="User is not logged into an organization")
 
-    membership = await session.get(UserOrganization, membership_id)
-    if membership is None:
-        raise HTTPException(status_code=404, detail="Organization membership not found")
+    if membership_override is not None:
+        membership = membership_override
+        user_id = user.get("id")
+        if user_id is None:
+            raise HTTPException(status_code=401, detail="User not authenticated")
+        if isinstance(user_id, str):
+            try:
+                user_uuid = UUID(user_id)
+            except ValueError as exc:  # pragma: no cover - defensive programming
+                raise HTTPException(status_code=400, detail="Invalid user identifier") from exc
+        else:
+            user_uuid = user_id
+        if membership.user_id != user_uuid:
+            raise HTTPException(status_code=403, detail="User does not belong to this organization")
+    else:
+        membership = await session.get(UserOrganization, membership_id)
+        if membership is None:
+            raise HTTPException(status_code=404, detail="Organization membership not found")
+
+    if event_key_override is not None:
+        event_key = event_key_override
+    else:
+        event_key = await get_active_event_key_for_user(session, user)
+
+    event_year = event_year_override
+    if event_year is None:
+        event = await get_event_or_404(session, event_key)
+        event_year = event.year
 
     organization_id = membership.organization_id
 
-    alliance_organization_ids = await get_scouting_alliance_organization_ids(
-        session, event_key, organization_id
-    )
-    alliance_organization_ids_tuple = tuple(alliance_organization_ids)
+    if alliance_ids_override is not None:
+        alliance_id_set = {int(org_id) for org_id in alliance_ids_override}
+    else:
+        alliance_id_set = await get_scouting_alliance_organization_ids(
+            session, event_key, organization_id
+        )
+    alliance_organization_ids_tuple = tuple(sorted(alliance_id_set))
 
-    match_model = MATCH_DATA_MODELS_BY_YEAR.get(event.year)
+    match_model = MATCH_DATA_MODELS_BY_YEAR.get(event_year)
 
-    tba_model = TBA_MATCH_DATA_MODELS_BY_YEAR.get(event.year)
+    tba_model = TBA_MATCH_DATA_MODELS_BY_YEAR.get(event_year)
     if tba_model is None:
         raise HTTPException(status_code=404, detail="TBA match data is not available for this event year")
 
@@ -1564,22 +1595,47 @@ async def update_tba_match_data_for_pending_alliances(
     if not api_key:
         raise HTTPException(status_code=500, detail="TBA API key is not configured")
 
-    schedule_statement = select(MatchSchedule).where(MatchSchedule.event_key == event_key)
-    schedule_result = await session.execute(schedule_statement)
-    match_schedules = schedule_result.scalars().all()
-
-    if not match_schedules:
-        return {"updated_matches": 0, "updated_alliances": 0, "updated_validations": 0}
-
-    pending_statement = select(DataValidation).where(
-        DataValidation.event_key == event_key,
-        DataValidation.organization_id.in_(alliance_organization_ids_tuple),
-        DataValidation.validation_status == ValidationStatus.PENDING,
+    pending_statement = (
+        select(DataValidation)
+        .options(
+            load_only(
+                DataValidation.event_key,
+                DataValidation.match_level,
+                DataValidation.match_number,
+                DataValidation.team_number,
+                DataValidation.user_id,
+                DataValidation.organization_id,
+                DataValidation.validation_status,
+            )
+        )
+        .where(
+            DataValidation.event_key == event_key,
+            DataValidation.organization_id.in_(alliance_organization_ids_tuple),
+            DataValidation.validation_status == ValidationStatus.PENDING,
+        )
     )
     pending_result = await session.execute(pending_statement)
     pending_records = pending_result.scalars().all()
 
     if not pending_records:
+        return {"updated_matches": 0, "updated_alliances": 0, "updated_validations": 0}
+
+    match_identifiers = {
+        (record.match_level, record.match_number)
+        for record in pending_records
+    }
+
+    if not match_identifiers:
+        return {"updated_matches": 0, "updated_alliances": 0, "updated_validations": 0}
+
+    schedule_statement = select(MatchSchedule).where(
+        MatchSchedule.event_key == event_key,
+        tuple_(MatchSchedule.match_level, MatchSchedule.match_number).in_(list(match_identifiers)),
+    )
+    schedule_result = await session.execute(schedule_statement)
+    match_schedules = schedule_result.scalars().all()
+
+    if not match_schedules:
         return {"updated_matches": 0, "updated_alliances": 0, "updated_validations": 0}
 
     pending_by_team: Dict[Tuple[str, int, int], List[DataValidation]] = defaultdict(list)
@@ -1629,6 +1685,31 @@ async def update_tba_match_data_for_pending_alliances(
         DataValidation,
     ] = {}
 
+    alliance_keys: Set[Tuple[str, int, Alliance]] = set()
+    for match_payload in alliances_to_process.values():
+        for alliance_payload in match_payload["alliances"]:
+            alliance_keys.add(
+                (
+                    match_payload["match_level"],
+                    match_payload["match_number"],
+                    alliance_payload["alliance"],
+                )
+            )
+
+    existing_tba_records: Dict[Tuple[str, int, Alliance], TBAMatchData] = {}
+    if alliance_keys:
+        tba_statement = select(tba_model).where(
+            tba_model.event_key == event_key,
+            tuple_(tba_model.match_level, tba_model.match_number, tba_model.alliance).in_(
+                [(level, number, alliance) for level, number, alliance in alliance_keys]
+            ),
+        )
+        tba_result = await session.execute(tba_statement)
+        existing_tba_records = {
+            (record.match_level, record.match_number, record.alliance): record
+            for record in tba_result.scalars().all()
+        }
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         for match_key, match_payload in alliances_to_process.items():
             response = await client.get(
@@ -1661,7 +1742,7 @@ async def update_tba_match_data_for_pending_alliances(
                 alliance_breakdown = score_breakdown.get(color_key)
                 alliance_info = alliances.get(color_key) or {}
                 parsed = _parse_tba_breakdown(
-                    event.year,
+                    event_year,
                     alliance_breakdown,
                     alliance_payload["teams"],
                 )
@@ -1705,23 +1786,21 @@ async def update_tba_match_data_for_pending_alliances(
                 )
 
                 combined_data: Optional[Dict[str, Any]] = None
-                if should_attempt_auto_validate:
+                if should_attempt_auto_validate and match_model is not None:
                     combined_data = await _calculate_combined_match_data(
                         session,
-                        event.year,
+                        event_year,
                         match_model,
                         validations,
                         alliance_payload["teams"],
                     )
 
-                statement = select(tba_model).where(
-                    tba_model.event_key == event_key,
-                    tba_model.match_number == match_payload["match_number"],
-                    tba_model.match_level == match_payload["match_level"],
-                    tba_model.alliance == alliance_enum,
+                existing_key = (
+                    match_payload["match_level"],
+                    match_payload["match_number"],
+                    alliance_enum,
                 )
-                result = await session.execute(statement)
-                record = result.scalars().first()
+                record = existing_tba_records.get(existing_key)
 
                 if record is None:
                     record = tba_model(
@@ -1730,6 +1809,7 @@ async def update_tba_match_data_for_pending_alliances(
                         match_level=match_payload["match_level"],
                         alliance=alliance_enum,
                     )
+                    existing_tba_records[existing_key] = record
 
                 for field_name, value in parsed.items():
                     setattr(record, field_name, value)
@@ -1740,7 +1820,7 @@ async def update_tba_match_data_for_pending_alliances(
                 validations_status = ValidationStatus.NEEDS_REVIEW
                 if (
                     combined_data is not None
-                    and _tba_matches_combined_data(event.year, parsed, combined_data)
+                    and _tba_matches_combined_data(event_year, parsed, combined_data)
                 ):
                     validations_status = ValidationStatus.VALID
 

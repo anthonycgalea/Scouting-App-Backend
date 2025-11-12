@@ -17,7 +17,7 @@ from html import escape
 from types import SimpleNamespace
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 from uuid import UUID
-from sqlalchemy import func, literal, union_all
+from sqlalchemy import func, literal, or_, union_all
 
 
 load_dotenv()
@@ -297,6 +297,10 @@ async def get_organization_dashboard(
         event_key = event_record.event_key
         event_year = event_record.year
 
+    organization_team_numbers: Set[int] = set()
+    if organization.team_number is not None:
+        organization_team_numbers.add(int(organization.team_number))
+
     team_count_stmt = (
         select(func.count())
         .select_from(TeamEvent)
@@ -438,7 +442,9 @@ async def get_organization_dashboard(
         ).scalar_one()
 
     upcoming_matches: List[DashboardMatch] = []
-    if match_model is not None:
+    if match_model is not None and organization_team_numbers:
+        team_numbers = tuple(organization_team_numbers)
+
         match_counts_subquery = (
             select(
                 match_model.event_key.label("event_key"),
@@ -487,6 +493,16 @@ async def get_organization_dashboard(
             .order_by(MatchSchedule.match_level, MatchSchedule.match_number)
             .limit(5)
         )
+
+        team_filter = or_(
+            MatchSchedule.red1_id.in_(team_numbers),
+            MatchSchedule.red2_id.in_(team_numbers),
+            MatchSchedule.red3_id.in_(team_numbers),
+            MatchSchedule.blue1_id.in_(team_numbers),
+            MatchSchedule.blue2_id.in_(team_numbers),
+            MatchSchedule.blue3_id.in_(team_numbers),
+        )
+        schedule_stmt = schedule_stmt.where(team_filter)
 
         schedule_result = await session.execute(schedule_stmt)
         for row in schedule_result:

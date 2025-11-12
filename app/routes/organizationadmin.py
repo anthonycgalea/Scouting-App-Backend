@@ -17,6 +17,7 @@ from html import escape
 from types import SimpleNamespace
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 from uuid import UUID
+from sqlalchemy import func, literal, union_all
 
 
 load_dotenv()
@@ -160,23 +161,32 @@ from app.models import (
     PredictionQueue,
     PitScout2025,
     Prescout2025,
+    ValidationStatus,
+    RobotEventImageLink,
     SuperScoutData2025,
+    TeamEvent,
     User,
     UserOrganization,
     Endgame2025,
 )
 from app.models.user_organization import UserRole
 from app.services.event import (
+    MATCH_DATA_MODELS_BY_YEAR,
     MatchExportRequest,
     MatchExportType,
     get_active_event_key_for_user,
     get_match_data_for_event_or_404,
-    get_user_membership_or_404,
     require_lead_or_admin_membership,
     serialize_match_data_for_export,
 )
-from app.services.scout import _enqueue_unplayed_matches_for_prediction_queue
+from app.services.scout import (
+    PIT_SCOUT_MODELS_BY_YEAR,
+    PRESCOUT_MODELS_BY_YEAR,
+    SUPERSCOUT_MODELS_BY_YEAR,
+    _enqueue_unplayed_matches_for_prediction_queue,
+)
 from app.services.match_prediction import MATCH_PREDICTION_MODELS_BY_YEAR
+from app.services.event import get_user_membership_or_404
 
 class CreateOrgEventCommand(SQLModel):
     OrganizationId: int
@@ -206,6 +216,318 @@ class OrganizationApplication(SQLModel):
     email: str
     role: UserRole
     joined: datetime
+
+
+class DashboardTeam(SQLModel):
+    number: Optional[int] = None
+    name: str
+
+
+class DashboardEventInfo(SQLModel):
+    teamCount: int
+    qualificationMatches: int
+
+
+class DashboardProgress(SQLModel):
+    scouted: int
+    prescout: int
+    pitScouting: int
+    photos: int
+    superScout: int
+    validated: int
+
+
+class DashboardAlliance(SQLModel):
+    teams: List[int]
+
+
+class DashboardAlliances(SQLModel):
+    red: DashboardAlliance
+    blue: DashboardAlliance
+
+
+class DashboardMatch(SQLModel):
+    matchLevel: str
+    matchNumber: int
+    alliances: DashboardAlliances
+
+
+class OrganizationDashboardResponse(SQLModel):
+    loggedInTeam: DashboardTeam
+    eventInfo: DashboardEventInfo
+    progress: DashboardProgress
+    upcomingMatches: List[DashboardMatch]
+
+
+@router.get("/dashboard", response_model=OrganizationDashboardResponse)
+async def get_organization_dashboard(
+    user=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> OrganizationDashboardResponse:
+    membership = await get_user_membership_or_404(session, user)
+
+    organization = await session.get(Organization, membership.organization_id)
+    if organization is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    if membership.role == UserRole.GUEST and membership.event_key:
+        event_key = membership.event_key
+        event_row = await session.execute(
+            select(FRCEvent.year).where(FRCEvent.event_key == event_key)
+        )
+        event_year = event_row.scalar_one_or_none()
+        if event_year is None:
+            raise HTTPException(status_code=404, detail="Active event not found for organization")
+    else:
+        event_statement = (
+            select(OrganizationEvent.event_key, FRCEvent.year)
+            .join(FRCEvent, FRCEvent.event_key == OrganizationEvent.event_key)
+            .where(
+                OrganizationEvent.organization_id == membership.organization_id,
+                OrganizationEvent.active == True,  # noqa: E712
+            )
+        )
+        event_result = await session.execute(event_statement)
+        event_record = event_result.first()
+        if event_record is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No active event configured for this organization",
+            )
+        event_key = event_record.event_key
+        event_year = event_record.year
+
+    team_count_stmt = (
+        select(func.count())
+        .select_from(TeamEvent)
+        .where(TeamEvent.event_key == event_key)
+    )
+    team_count = (await session.execute(team_count_stmt)).scalar_one()
+
+    qualification_stmt = (
+        select(func.count())
+        .select_from(MatchSchedule)
+        .where(
+            MatchSchedule.event_key == event_key,
+            func.lower(MatchSchedule.match_level) == "qm",
+        )
+    )
+    qualification_matches = (await session.execute(qualification_stmt)).scalar_one()
+
+    match_model = MATCH_DATA_MODELS_BY_YEAR.get(event_year)
+    prescout_model = PRESCOUT_MODELS_BY_YEAR.get(event_year)
+    pit_model = PIT_SCOUT_MODELS_BY_YEAR.get(event_year)
+    superscout_model = SUPERSCOUT_MODELS_BY_YEAR.get(event_year)
+
+    scouted_count = 0
+    if match_model is not None:
+        match_count_stmt = (
+            select(func.count())
+            .select_from(match_model)
+            .where(
+                match_model.event_key == event_key,
+                match_model.organization_id == membership.organization_id,
+                func.lower(match_model.match_level) == "qm",
+            )
+        )
+        scouted_count = (await session.execute(match_count_stmt)).scalar_one()
+
+    prescout_count = 0
+    if prescout_model is not None:
+        prescout_count_stmt = (
+            select(func.count())
+            .select_from(prescout_model)
+            .where(
+                prescout_model.event_key == event_key,
+                prescout_model.organization_id == membership.organization_id,
+                func.lower(prescout_model.match_level) == "qm",
+            )
+        )
+        prescout_count = (await session.execute(prescout_count_stmt)).scalar_one()
+
+    pit_count = 0
+    if pit_model is not None:
+        pit_count_stmt = (
+            select(func.count(func.distinct(pit_model.team_number)))
+            .where(
+                pit_model.event_key == event_key,
+                pit_model.organization_id == membership.organization_id,
+            )
+        )
+        pit_count = (await session.execute(pit_count_stmt)).scalar_one()
+
+    photo_count_stmt = (
+        select(func.count(func.distinct(RobotEventImageLink.team_number)))
+        .where(RobotEventImageLink.event_key == event_key)
+    )
+    photo_count = (await session.execute(photo_count_stmt)).scalar_one()
+
+    validated_count_stmt = (
+        select(func.count())
+        .select_from(DataValidation)
+        .where(
+            DataValidation.event_key == event_key,
+            DataValidation.organization_id == membership.organization_id,
+            DataValidation.validation_status == ValidationStatus.VALID,
+        )
+    )
+    validated_count = (await session.execute(validated_count_stmt)).scalar_one()
+
+    superscout_alliance_count = 0
+    if superscout_model is not None:
+        schedule_table = MatchSchedule.__table__
+        superscout_table = superscout_model.__table__
+
+        def _schedule_team_select(column, alliance_label: str):
+            return (
+                select(
+                    schedule_table.c.event_key.label("event_key"),
+                    schedule_table.c.match_level.label("match_level"),
+                    schedule_table.c.match_number.label("match_number"),
+                    literal(alliance_label).label("alliance"),
+                    column.label("team_number"),
+                )
+                .where(
+                    schedule_table.c.event_key == event_key,
+                    column.isnot(None),
+                    func.lower(schedule_table.c.match_level) == "qm",
+                )
+            )
+
+        schedule_union = union_all(
+            _schedule_team_select(schedule_table.c.red1_id, "red"),
+            _schedule_team_select(schedule_table.c.red2_id, "red"),
+            _schedule_team_select(schedule_table.c.red3_id, "red"),
+            _schedule_team_select(schedule_table.c.blue1_id, "blue"),
+            _schedule_team_select(schedule_table.c.blue2_id, "blue"),
+            _schedule_team_select(schedule_table.c.blue3_id, "blue"),
+        ).subquery()
+
+        alliance_counts = (
+            select(
+                schedule_union.c.match_level,
+                schedule_union.c.match_number,
+                schedule_union.c.alliance,
+                func.count(func.distinct(superscout_table.c.team_number)).label("team_count"),
+            )
+            .select_from(schedule_union)
+            .join(
+                superscout_table,
+                (
+                    (superscout_table.c.event_key == schedule_union.c.event_key)
+                    & (superscout_table.c.match_level == schedule_union.c.match_level)
+                    & (superscout_table.c.match_number == schedule_union.c.match_number)
+                    & (superscout_table.c.team_number == schedule_union.c.team_number)
+                    & (superscout_table.c.organization_id == membership.organization_id)
+                ),
+            )
+            .group_by(
+                schedule_union.c.match_level,
+                schedule_union.c.match_number,
+                schedule_union.c.alliance,
+            )
+        ).subquery()
+
+        superscout_alliance_stmt = (
+            select(func.count())
+            .select_from(alliance_counts)
+            .where(alliance_counts.c.team_count >= 3)
+        )
+        superscout_alliance_count = (
+            await session.execute(superscout_alliance_stmt)
+        ).scalar_one()
+
+    upcoming_matches: List[DashboardMatch] = []
+    if match_model is not None:
+        match_counts_subquery = (
+            select(
+                match_model.event_key.label("event_key"),
+                match_model.match_level.label("match_level"),
+                match_model.match_number.label("match_number"),
+                func.count().label("scouted_count"),
+            )
+            .where(
+                match_model.event_key == event_key,
+                match_model.organization_id == membership.organization_id,
+                func.lower(match_model.match_level) == "qm",
+            )
+            .group_by(
+                match_model.event_key,
+                match_model.match_level,
+                match_model.match_number,
+            )
+            .subquery()
+        )
+
+        schedule_stmt = (
+            select(
+                MatchSchedule.match_level,
+                MatchSchedule.match_number,
+                MatchSchedule.red1_id,
+                MatchSchedule.red2_id,
+                MatchSchedule.red3_id,
+                MatchSchedule.blue1_id,
+                MatchSchedule.blue2_id,
+                MatchSchedule.blue3_id,
+                func.coalesce(match_counts_subquery.c.scouted_count, 0).label("scouted_count"),
+            )
+            .outerjoin(
+                match_counts_subquery,
+                (
+                    (match_counts_subquery.c.event_key == MatchSchedule.event_key)
+                    & (match_counts_subquery.c.match_level == MatchSchedule.match_level)
+                    & (match_counts_subquery.c.match_number == MatchSchedule.match_number)
+                ),
+            )
+            .where(
+                MatchSchedule.event_key == event_key,
+                func.lower(MatchSchedule.match_level) == "qm",
+                func.coalesce(match_counts_subquery.c.scouted_count, 0) < 6,
+            )
+            .order_by(MatchSchedule.match_level, MatchSchedule.match_number)
+            .limit(5)
+        )
+
+        schedule_result = await session.execute(schedule_stmt)
+        for row in schedule_result:
+            red_teams = [
+                team
+                for team in (row.red1_id, row.red2_id, row.red3_id)
+                if team is not None
+            ]
+            blue_teams = [
+                team
+                for team in (row.blue1_id, row.blue2_id, row.blue3_id)
+                if team is not None
+            ]
+
+            upcoming_matches.append(
+                DashboardMatch(
+                    matchLevel=row.match_level.lower(),
+                    matchNumber=int(row.match_number),
+                    alliances=DashboardAlliances(
+                        red=DashboardAlliance(teams=[int(team) for team in red_teams]),
+                        blue=DashboardAlliance(teams=[int(team) for team in blue_teams]),
+                    ),
+                )
+            )
+
+    return OrganizationDashboardResponse(
+        loggedInTeam=DashboardTeam(number=organization.team_number, name=organization.name),
+        eventInfo=DashboardEventInfo(
+            teamCount=int(team_count),
+            qualificationMatches=int(qualification_matches),
+        ),
+        progress=DashboardProgress(
+            scouted=int(scouted_count),
+            prescout=int(prescout_count),
+            pitScouting=int(pit_count),
+            photos=int(photo_count),
+            superScout=int(superscout_alliance_count),
+            validated=int(validated_count),
+        ),
+        upcomingMatches=upcoming_matches,
+    )
 
 
 async def _get_or_create_organization_event(

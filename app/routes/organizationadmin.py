@@ -4,6 +4,7 @@ from sqlmodel import SQLModel, delete, select, update
 from datetime import datetime
 from app.auth.dependencies import get_current_user
 from app.db.database import get_session
+from app.services.event import get_scouting_alliance_organization_ids
 from app.services.tba_sync import (
     TBASyncError,
     import_event_registration_for_event,
@@ -301,6 +302,13 @@ async def get_organization_dashboard(
     if organization.team_number is not None:
         organization_team_numbers.add(int(organization.team_number))
 
+    alliance_organization_ids = await get_scouting_alliance_organization_ids(
+        session, event_key, membership.organization_id
+    )
+    if not alliance_organization_ids and membership.organization_id is not None:
+        alliance_organization_ids = {int(membership.organization_id)}
+    alliance_organization_ids_tuple = tuple(sorted(alliance_organization_ids))
+
     team_count_stmt = (
         select(func.count())
         .select_from(TeamEvent)
@@ -330,7 +338,7 @@ async def get_organization_dashboard(
             .select_from(match_model)
             .where(
                 match_model.event_key == event_key,
-                match_model.organization_id == membership.organization_id,
+                match_model.organization_id.in_(alliance_organization_ids_tuple),
                 func.lower(match_model.match_level) == "qm",
             )
         )
@@ -343,7 +351,7 @@ async def get_organization_dashboard(
             .select_from(prescout_model)
             .where(
                 prescout_model.event_key == event_key,
-                prescout_model.organization_id == membership.organization_id,
+                prescout_model.organization_id.in_(alliance_organization_ids_tuple),
                 func.lower(prescout_model.match_level) == "qm",
             )
         )
@@ -355,7 +363,7 @@ async def get_organization_dashboard(
             select(func.count(func.distinct(pit_model.team_number)))
             .where(
                 pit_model.event_key == event_key,
-                pit_model.organization_id == membership.organization_id,
+                pit_model.organization_id.in_(alliance_organization_ids_tuple),
             )
         )
         pit_count = (await session.execute(pit_count_stmt)).scalar_one()
@@ -371,7 +379,7 @@ async def get_organization_dashboard(
         .select_from(DataValidation)
         .where(
             DataValidation.event_key == event_key,
-            DataValidation.organization_id == membership.organization_id,
+            DataValidation.organization_id.in_(alliance_organization_ids_tuple),
             DataValidation.validation_status == ValidationStatus.VALID,
         )
     )
@@ -422,7 +430,11 @@ async def get_organization_dashboard(
                     & (superscout_table.c.match_level == schedule_union.c.match_level)
                     & (superscout_table.c.match_number == schedule_union.c.match_number)
                     & (superscout_table.c.team_number == schedule_union.c.team_number)
-                    & (superscout_table.c.organization_id == membership.organization_id)
+                    & (
+                        superscout_table.c.organization_id.in_(
+                            alliance_organization_ids_tuple
+                        )
+                    )
                 ),
             )
             .group_by(
@@ -454,7 +466,7 @@ async def get_organization_dashboard(
             )
             .where(
                 match_model.event_key == event_key,
-                match_model.organization_id == membership.organization_id,
+                match_model.organization_id.in_(alliance_organization_ids_tuple),
                 func.lower(match_model.match_level) == "qm",
             )
             .group_by(

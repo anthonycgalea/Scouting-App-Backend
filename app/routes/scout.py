@@ -243,6 +243,21 @@ SuperScoutResponse = reduce(
     superscout_response_types[0],
 )
 
+match_scout_request_types: List[Type[MatchData]] = []
+
+for match_model in MATCH_DATA_MODELS_BY_YEAR.values():
+    if match_model not in match_scout_request_types:
+        match_scout_request_types.append(match_model)
+
+if MatchData not in match_scout_request_types:
+    match_scout_request_types.append(MatchData)
+
+MatchScoutRequest = reduce(
+    lambda accumulated, next_model: accumulated | next_model,
+    match_scout_request_types[1:],
+    match_scout_request_types[0],
+)
+
 
 @router.get("/pit", response_model=List[PitScoutResponse])
 async def list_pit_scout_records(
@@ -381,7 +396,7 @@ async def submit_single_match(
 
 @router.put("/edit/batch")
 async def edit_multiple_matches(
-    matches: List[MatchData],
+    matches: List[MatchScoutRequest],
     user=Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
 ):
@@ -389,7 +404,7 @@ async def edit_multiple_matches(
 
 @router.put("/edit")
 async def edit_single_match(
-    match: MatchData,
+    match: MatchScoutRequest,
     user=Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
 ):

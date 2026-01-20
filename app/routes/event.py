@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.auth.dependencies import get_current_user
 from app.db.database import get_session
-from typing import Any, Dict, List, Optional, Union
+from functools import reduce
+from typing import Any, Dict, List, Optional, Type, Union
 
-from app.models import Organization, FRCEvent
+from app.models import FRCEvent, MatchPredictions, Organization
 
 router = APIRouter(
     prefix="/event",
@@ -13,6 +14,7 @@ router = APIRouter(
 
 from app.services.event import *
 from app.services.match_prediction import (
+    MATCH_PREDICTION_MODELS_BY_YEAR,
     get_match_prediction_for_user_organization,
     list_match_predictions_for_event,
     simulate_match_prediction,
@@ -21,6 +23,21 @@ from app.services.team_media import (
     EventTeamImagesResponse,
     list_event_team_images,
     list_match_team_images,
+)
+
+match_prediction_response_types: List[Type[MatchPredictions]] = []
+
+for prediction_model in MATCH_PREDICTION_MODELS_BY_YEAR.values():
+    if prediction_model not in match_prediction_response_types:
+        match_prediction_response_types.append(prediction_model)
+
+if MatchPredictions not in match_prediction_response_types:
+    match_prediction_response_types.append(MatchPredictions)
+
+MatchPredictionResponse = reduce(
+    lambda accumulated, next_model: accumulated | next_model,
+    match_prediction_response_types[1:],
+    match_prediction_response_types[0],
 )
 
 @router.get("/match/{matchLevel}/{matchNumber}", tags=["Scout"])
@@ -44,7 +61,11 @@ async def get_match_preview_endpoint(
     return await get_match_preview(session, user, matchNumber, matchLevel)
 
 
-@router.get("/match/{matchLevel}/{matchNumber}/simulation", tags=["Scout"])
+@router.get(
+    "/match/{matchLevel}/{matchNumber}/simulation",
+    tags=["Scout"],
+    response_model=MatchPredictionResponse,
+)
 async def get_match_simulation(
     matchNumber: int,
     matchLevel: str,
@@ -57,7 +78,11 @@ async def get_match_simulation(
     return prediction
 
 
-@router.post("/match/{matchLevel}/{matchNumber}/simulation", tags=["Scout"])
+@router.post(
+    "/match/{matchLevel}/{matchNumber}/simulation",
+    tags=["Scout"],
+    response_model=MatchPredictionResponse,
+)
 async def run_match_simulation(
     matchNumber: int,
     matchLevel: str,
@@ -68,7 +93,11 @@ async def run_match_simulation(
     return await simulate_match_prediction(session, event_code, matchLevel, matchNumber)
 
 
-@router.get("/matches/simulation", tags=["Scout"])
+@router.get(
+    "/matches/simulation",
+    tags=["Scout"],
+    response_model=List[MatchPredictionResponse],
+)
 async def list_match_simulations(
     session: AsyncSession = Depends(get_session),
     user=Depends(get_current_user),

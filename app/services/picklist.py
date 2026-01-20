@@ -12,6 +12,7 @@ from app.models import (
     PickList,
     PickListGenerator,
     PickListGenerator2025,
+    PickListGenerator2026,
     PickListRank,
 )
 from app.services.analytics.event_summary import get_team_event_z_scores
@@ -19,6 +20,7 @@ from app.services.analytics.event_summary import get_team_event_z_scores
 
 PICKLIST_GENERATOR_MODELS_BY_YEAR: Dict[int, Type[PickListGenerator]] = {
     2025: PickListGenerator2025,
+    2026: PickListGenerator2026,
 }
 
 

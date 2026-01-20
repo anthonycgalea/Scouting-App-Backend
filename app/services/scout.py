@@ -37,15 +37,19 @@ from app.models import (
     MatchData2025,
     MatchData2026,
     Prescout2025,
+    Prescout2026,
     MatchSchedule,
     PitScout,
     PitScout2025,
+    PitScout2026,
     PredictionQueue,
     Season,
     SuperScoutData,
     SuperScoutData2025,
+    SuperScoutData2026,
     TBAMatchData,
     TBAMatchData2025,
+    TBAMatchData2026,
     User,
     UserOrganization,
     ValidationStatus,
@@ -67,18 +71,22 @@ MatchDataType = TypeVar("MatchDataType", bound=MatchData)
 
 TBA_MATCH_DATA_MODELS_BY_YEAR: Dict[int, type[TBAMatchData]] = {
     2025: TBAMatchData2025,
+    2026: TBAMatchData2026,
 }
 
 PIT_SCOUT_MODELS_BY_YEAR: Dict[int, type[PitScout]] = {
     2025: PitScout2025,
+    2026: PitScout2026,
 }
 
 PRESCOUT_MODELS_BY_YEAR: Dict[int, type[MatchData]] = {
     2025: Prescout2025,
+    2026: Prescout2026,
 }
 
 SUPERSCOUT_MODELS_BY_YEAR: Dict[int, type[SuperScoutData]] = {
     2025: SuperScoutData2025,
+    2026: SuperScoutData2026,
 }
 
 SUPERSCOUT_BUTTON_FIELDS_BASE: List[Tuple[str, str]] = [

@@ -117,6 +117,16 @@ SUPERSCOUT_BUTTON_FIELDS_BY_YEAR: Dict[int, List[Tuple[str, str]]] = {
         ("floor_coral", "Picks up Coral off Floor"),
         ("holds_both_pieces", "Holds Both Game Pieces"),
     ],
+    2026: [
+        *SUPERSCOUT_BUTTON_FIELDS_BASE,
+        ("floor_pickup", "Floor Pickup"),
+        ("auto_corral_pickup", "Auto Corral Pickup"),
+        ("auto_depot_pickup", "Auto Depot Pickup"),
+        ("human_player_feed", "Human Player Feed"),
+        ("passed_fuel", "Passed Fuel"),
+        ("climbs_middle", "Climbs Middle"),
+        ("climbs_end", "Climbs End"),
+    ],
 }
 
 TBA_BREAKDOWN_PARSERS_BY_YEAR: Dict[

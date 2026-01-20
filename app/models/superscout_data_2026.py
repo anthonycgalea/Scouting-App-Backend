@@ -15,6 +15,7 @@ class SuperScoutData2026(SuperScoutData, table=True):
     startPosition: StartingPosition2026 = Field(nullable=True)
     floor_pickup: bool = Field(default=False)
     auto_corral_pickup: bool = Field(default=False)
+    auto_center_pickup: bool = Field(default=False)
     auto_depot_pickup: bool = Field(default=False)
     human_player_feed: bool = Field(default=False)
     passed_fuel: bool = Field(default=False)

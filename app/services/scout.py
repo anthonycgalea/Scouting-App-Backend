@@ -122,6 +122,7 @@ SUPERSCOUT_BUTTON_FIELDS_BY_YEAR: Dict[int, List[Tuple[str, str]]] = {
         ("floor_pickup", "Floor Pickup"),
         ("auto_corral_pickup", "Auto Corral Pickup"),
         ("auto_depot_pickup", "Auto Depot Pickup"),
+        ("auto_center_pickup", "Auto Center Pickup")
         ("human_player_feed", "Human Player Feed"),
         ("passed_fuel", "Passed Fuel"),
         ("climbs_middle", "Climbs Middle"),

@@ -18,3 +18,5 @@ class SuperScoutData2026(SuperScoutData, table=True):
     auto_depot_pickup: bool = Field(default=False)
     human_player_feed: bool = Field(default=False)
     passed_fuel: bool = Field(default=False)
+    climbs_middle: bool = Field(default=False)
+    climbs_end: bool = Field(default=False)

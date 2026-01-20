@@ -1,5 +1,5 @@
 from sqlmodel import SQLModel, Field, Relationship
-from typing import Optional
+from typing import ClassVar, Optional
 from datetime import datetime
 from enum import Enum
 from uuid import UUID
@@ -13,16 +13,16 @@ class Endgame2026(str, Enum):
 
 class GameSpecific2026(MatchData):
     __abstract__=True
-    AUTO_POINT_WEIGHTS = {
+    AUTO_POINT_WEIGHTS: ClassVar[dict[str, float]] = {
         "autoFuel": 1.0,
         "autoPass": 0.0,
         "autoClimb": 15.0,
     }
-    TELEOP_POINT_WEIGHTS = {
+    TELEOP_POINT_WEIGHTS: ClassVar[dict[str, float]] = {
         "teleopFuel": 1.0,
         "teleopPass": 0.0,
     }
-    ENDGAME_POINT_VALUES = {
+    ENDGAME_POINT_VALUES: ClassVar[dict[str, float]] = {
         "NONE": 0.0,
         "L1": 10.0,
         "L2": 20.0,

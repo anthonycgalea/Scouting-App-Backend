@@ -84,10 +84,25 @@ def _default_yearly_configs() -> Dict[int, YearlyScoringConfig]:
             ),
         ),
         2026: YearlyScoringConfig(
-            auto_weights={},
-            teleop_weights={},
-            endgame_points={"NONE": 0.0},
-            game_piece_fields=(),
+            auto_weights={
+                "autoFuel": 1.0,
+                "autoPass": 0.0,
+                "autoClimb": 15.0,
+            },
+            teleop_weights={
+                "teleopFuel": 1.0,
+                "teleopPass": 0.0,
+            },
+            endgame_points={
+                "NONE": 0.0,
+                "L1": 10.0,
+                "L2": 20.0,
+                "L3": 30.0,
+            },
+            game_piece_fields=(
+                "autoFuel",
+                "teleopFuel",
+            ),
         ),
     }
 
@@ -998,5 +1013,4 @@ async def get_team_event_head_to_head(
         return []
 
     return _summarize_head_to_head_by_team(dataframe, scoring_config)
-
 

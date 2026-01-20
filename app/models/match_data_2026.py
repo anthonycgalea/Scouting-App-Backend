@@ -13,6 +13,21 @@ class Endgame2026(str, Enum):
 
 class GameSpecific2026(MatchData):
     __abstract__=True
+    AUTO_POINT_WEIGHTS = {
+        "autoFuel": 1.0,
+        "autoPass": 0.0,
+        "autoClimb": 15.0,
+    }
+    TELEOP_POINT_WEIGHTS = {
+        "teleopFuel": 1.0,
+        "teleopPass": 0.0,
+    }
+    ENDGAME_POINT_VALUES = {
+        "NONE": 0.0,
+        "L1": 10.0,
+        "L2": 20.0,
+        "L3": 30.0,
+    }
     # Autonomous
     autoFuel: int = Field(default=0)
     autoPass: int = Field(default=0)

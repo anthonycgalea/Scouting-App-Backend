@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from functools import reduce
+from typing import Any, Dict, List, Optional, Type
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,13 +12,14 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.auth.dependencies import get_current_user
 from app.db.database import get_session
-from app.models import PickList, PickListRank
+from app.models import PickList, PickListGenerator, PickListRank
 from app.services.event import (
     get_active_event_key_for_user,
     get_event_or_404,
     require_lead_or_admin_membership,
 )
 from app.services.picklist import (
+    PICKLIST_GENERATOR_MODELS_BY_YEAR,
     fetch_picklist_generators,
     fetch_picklists_for_event,
     fetch_ranks_for_picklists,
@@ -31,6 +33,21 @@ from app.services.season import get_season_by_year_or_404
 router = APIRouter(
     prefix="/picklists",
     tags=["Pick Lists"],
+)
+
+picklist_generator_response_types: List[Type[PickListGenerator]] = []
+
+for generator_model in PICKLIST_GENERATOR_MODELS_BY_YEAR.values():
+    if generator_model not in picklist_generator_response_types:
+        picklist_generator_response_types.append(generator_model)
+
+if PickListGenerator not in picklist_generator_response_types:
+    picklist_generator_response_types.append(PickListGenerator)
+
+PickListGeneratorResponse = reduce(
+    lambda accumulated, next_model: accumulated | next_model,
+    picklist_generator_response_types[1:],
+    picklist_generator_response_types[0],
 )
 
 
@@ -101,11 +118,11 @@ class PickListGeneratorDeleteRequest(SQLModel):
     id: UUID
 
 
-@router.get("/generators")
+@router.get("/generators", response_model=List[PickListGeneratorResponse])
 async def list_picklist_generators(
     session: AsyncSession = Depends(get_session),
     user: Dict[str, Any] = Depends(get_current_user),
-) -> List[Dict[str, Any]]:
+) -> List[PickListGeneratorResponse]:
     membership = await require_lead_or_admin_membership(session, user)
     event_key = await get_active_event_key_for_user(session, user)
     event = await get_event_or_404(session, event_key)
@@ -348,12 +365,12 @@ async def update_picklists(
     return responses
 
 
-@router.post("/generators")
+@router.post("/generators", response_model=PickListGeneratorResponse)
 async def create_picklist_generator(
     request: PickListGeneratorCreateRequest,
     session: AsyncSession = Depends(get_session),
     user: Dict[str, Any] = Depends(get_current_user),
-) -> Dict[str, Any]:
+) -> PickListGeneratorResponse:
     membership = await require_lead_or_admin_membership(session, user)
     event_key = await get_active_event_key_for_user(session, user)
     event = await get_event_or_404(session, event_key)
@@ -408,12 +425,12 @@ async def delete_picklist_generator(
     return {"success": True}
 
 
-@router.patch("/generators")
+@router.patch("/generators", response_model=PickListGeneratorResponse)
 async def update_picklist_generator(
     request: PickListGeneratorUpdateRequest,
     session: AsyncSession = Depends(get_session),
     user: Dict[str, Any] = Depends(get_current_user),
-) -> Dict[str, Any]:
+) -> PickListGeneratorResponse:
     membership = await require_lead_or_admin_membership(session, user)
     event_key = await get_active_event_key_for_user(session, user)
     event = await get_event_or_404(session, event_key)

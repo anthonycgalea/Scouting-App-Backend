@@ -16,9 +16,11 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.models import (
     MatchData,
     MatchPredictions2025,
+    MatchPredictions2026,
     Organization,
     OrganizationEvent,
     Prescout2025,
+    Prescout2026,
     Season,
     StatboticsData,
     UserOrganization,
@@ -48,6 +50,7 @@ RecordType = TypeVar("RecordType", bound=MatchData)
 
 PRESCOUT_MODELS_BY_YEAR = {
     2025: Prescout2025,
+    2026: Prescout2026,
 }
 
 WEIGHT_SCHEDULE = [3, 3, 3, 3, 3, 2, 2, 2, 1, 1]
@@ -65,6 +68,7 @@ MATCH_DATA_FIELDS_TO_EXCLUDE = {
 
 MATCH_PREDICTION_MODELS_BY_YEAR = {
     2025: MatchPredictions2025,
+    2026: MatchPredictions2026,
 }
 
 RP_PREDICTION_FIELDS: Tuple[str, ...] = (

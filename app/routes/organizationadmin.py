@@ -580,6 +580,25 @@ async def _get_or_create_organization_event(
     return organization_event
 
 
+async def _set_active_event(
+    session: AsyncSession, organization_event: OrganizationEvent
+) -> None:
+    organization_event.active = True
+    session.add(organization_event)
+    await session.flush()
+
+    deactivate_statement = (
+        update(OrganizationEvent)
+        .where(
+            OrganizationEvent.organization_id == organization_event.organization_id,
+            OrganizationEvent.id != organization_event.id,
+            OrganizationEvent.active == True,  # noqa: E712 - SQLAlchemy boolean comparison
+        )
+        .values(active=False)
+    )
+    await session.exec(deactivate_statement)
+
+
 async def _ensure_accepted_alliance(
     session: AsyncSession, event_id: UUID, other_organization_id: int
 ) -> OrganizationEventAlliance:
@@ -990,6 +1009,8 @@ async def accept_organization_collaboration(
         await session.flush()
     else:
         accepting_org_event = existing_event
+
+    await _set_active_event(session, accepting_org_event)
 
     reverse_alliance_statement = select(OrganizationEventAlliance).where(
         OrganizationEventAlliance.orgevent_Uid == accepting_org_event.id,

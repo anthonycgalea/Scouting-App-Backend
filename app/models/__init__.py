@@ -20,6 +20,7 @@ from .ranking_predictions_queue import RankingPredictionQueue
 from .robot_event_image_link import RobotEventImageLink
 from .superscout_data import SuperScoutData
 from .superscout_data_2025 import SuperScoutData2025
+from .superscout_data_2026 import SuperScoutData2026
 from .tba_match_data import Alliance, TBAMatchData
 from .tba_match_data_2025 import TBAMatchData2025
 from .tba_match_data_2026 import TBAMatchData2026

@@ -86,6 +86,12 @@ RP_PREDICTION_FIELDS: Tuple[str, ...] = (
     "blue_wr_win_pct",
     "red_rr_win_pct",
     "blue_rr_win_pct",
+    "red_energized_rp",
+    "blue_energized_rp",
+    "red_supercharged_rp",
+    "blue_supercharged_rp",
+    "red_traversal_rp",
+    "blue_traversal_rp",
 )
 
 
@@ -233,12 +239,20 @@ async def _get_team_statistics(
     auto_weights: Dict[str, float],
     teleop_weights: Dict[str, float],
     endgame_points: Dict[str, float],
+    climb_success_min_points: float,
+    use_climb_sampling: bool,
 ) -> Dict[str, Tuple[float, float]]:
     records = await _collect_team_records(
         session, match_model, event_key, team_number, organization_ids
     )
     if records:
-        _apply_calculated_fields(records, auto_weights, teleop_weights, endgame_points)
+        _apply_calculated_fields(
+            records,
+            auto_weights,
+            teleop_weights,
+            endgame_points,
+            climb_success_min_points=climb_success_min_points,
+        )
 
     statbotics_record = await session.get(StatboticsData, (event_key, int(team_number)))
     statbotics_total = None
@@ -262,7 +276,11 @@ async def _get_team_statistics(
             endgame_points_value = getattr(record, "endgame_points", None)
             if endgame_points_value is not None:
                 try:
-                    raw_probability = 1.0 if float(endgame_points_value) >= 12.0 else 0.0
+                    raw_probability = (
+                        1.0
+                        if float(endgame_points_value) >= climb_success_min_points
+                        else 0.0
+                    )
                 except (TypeError, ValueError):
                     return None
 
@@ -306,15 +324,27 @@ async def _get_team_statistics(
     endgame_mean, endgame_std = _compute_weighted_metric(
         records, lambda record: getattr(record, "endgame_points", 0.0)
     )
+    total_fuel_mean, total_fuel_std = _compute_weighted_metric(
+        records,
+        lambda record: _sum_record_fields(record, ("autoFuel", "teleopFuel")),
+    )
+    auto_climb_points_mean, auto_climb_points_std = _compute_weighted_metric(
+        records,
+        lambda record: float(getattr(record, "autoClimb", 0) or 0) * 15.0,
+    )
 
     climb_rate_mean, climb_rate_std = _compute_weighted_metric(
         records, _extract_climb_probability
     )
 
-    base_total_mean = total_mean - (climb_rate_mean * 12.0)
-    climb_variance = 144.0 * climb_rate_mean * (1.0 - climb_rate_mean)
-    base_total_variance = max(0.0, total_std**2 - climb_variance)
-    base_total_std = sqrt(base_total_variance)
+    if use_climb_sampling:
+        base_total_mean = total_mean - (climb_rate_mean * 12.0)
+        climb_variance = 144.0 * climb_rate_mean * (1.0 - climb_rate_mean)
+        base_total_variance = max(0.0, total_std**2 - climb_variance)
+        base_total_std = sqrt(base_total_variance)
+    else:
+        base_total_mean = total_mean
+        base_total_std = total_std
 
     return {
         "total": (total_mean, total_std),
@@ -324,6 +354,8 @@ async def _get_team_statistics(
         "processor": (processor_mean, processor_std),
         "endgame": (endgame_mean, endgame_std),
         "climb_rate": (climb_rate_mean, climb_rate_std),
+        "total_fuel": (total_fuel_mean, total_fuel_std),
+        "auto_climb_points": (auto_climb_points_mean, auto_climb_points_std),
     }
 
 def _apply_calculated_fields(
@@ -331,6 +363,7 @@ def _apply_calculated_fields(
     auto_weights: Dict[str, float],
     teleop_weights: Dict[str, float],
     endgame_points: Dict[str, float],
+    climb_success_min_points: float = 12.0,
 ) -> None:
     if not records:
         return
@@ -354,9 +387,11 @@ def _apply_calculated_fields(
         record.autonomous_points = autonomous_points
         record.teleop_points = teleop_points
         record.endgame_points = endgame_points_total
-        climb_points = 12.0 if endgame_points_total >= 12.0 else 0.0
+        climb_points = (
+            endgame_points_total if endgame_points_total >= climb_success_min_points else 0.0
+        )
         record.climb_points = climb_points
-        record.climb_success = 1.0 if climb_points >= 12.0 else 0.0
+        record.climb_success = 1.0 if climb_points >= climb_success_min_points else 0.0
         record.total_points = (
             autonomous_points + teleop_points + endgame_points_total
         )
@@ -498,8 +533,13 @@ async def retrieve_prediction_data(session: AsyncSession, user: Any) -> List[Mat
             limit,
             preferred_organization_id=membership.organization_id,
         )
+        climb_success_min_points = 10.0 if event.year == 2026 else 12.0
         _apply_calculated_fields(
-            latest_matches, auto_weights, teleop_weights, endgame_points
+            latest_matches,
+            auto_weights,
+            teleop_weights,
+            endgame_points,
+            climb_success_min_points=climb_success_min_points,
         )
         ordered_records.extend(latest_matches)
 
@@ -523,11 +563,13 @@ async def retrieve_prediction_data(session: AsyncSession, user: Any) -> List[Mat
             limit,
             preferred_organization_id=membership.organization_id,
         )
+        climb_success_min_points = 10.0 if event.year == 2026 else 12.0
         _apply_calculated_fields(
             latest_prescout,
             prescout_auto_weights,
             prescout_teleop_weights,
             prescout_endgame_points,
+            climb_success_min_points=climb_success_min_points,
         )
         ordered_records.extend(latest_prescout)
 
@@ -765,6 +807,8 @@ async def simulate_match_prediction(
     now = datetime.now()
     results: Dict[int, Dict[str, float]] = {}
     processed_organization_ids: Set[int] = set()
+    climb_success_min_points = 10.0 if event.year == 2026 else 12.0
+    use_climb_sampling = event.year == 2025
 
     for organization_id in organization_ids:
         if organization_id is None:
@@ -798,6 +842,8 @@ async def simulate_match_prediction(
                 auto_weights,
                 teleop_weights,
                 endgame_points,
+                climb_success_min_points,
+                use_climb_sampling,
             )
             for team_number in red_teams
         ]
@@ -811,6 +857,8 @@ async def simulate_match_prediction(
                 auto_weights,
                 teleop_weights,
                 endgame_points,
+                climb_success_min_points,
+                use_climb_sampling,
             )
             for team_number in blue_teams
         ]
@@ -832,86 +880,127 @@ async def simulate_match_prediction(
                 samples += team_samples
             return samples
 
-        red_total_samples = _generate_alliance_samples(red_stats, "total_without_climb")
-        blue_total_samples = _generate_alliance_samples(blue_stats, "total_without_climb")
+        if event.year == 2026:
+            red_total_samples = _generate_alliance_samples(red_stats, "total")
+            blue_total_samples = _generate_alliance_samples(blue_stats, "total")
 
-        def _sample_alliance_climb(
-            team_statistics: Sequence[Dict[str, Tuple[float, float]]]
-        ) -> Tuple[np.ndarray, np.ndarray]:
-            climb_points = np.zeros(n_samples)
-            any_climb = np.zeros(n_samples, dtype=bool)
+            red_win_pct = float(np.mean(red_total_samples > blue_total_samples))
+            blue_win_pct = 1.0 - red_win_pct
 
-            for stats in team_statistics:
-                climb_rate = float(stats.get("climb_rate", (0.0, 0.0))[0])
-                if climb_rate <= 0.0:
-                    continue
-                probability = min(max(climb_rate, 0.0), 1.0)
-                team_success = rng.random(n_samples) < probability
-                if not np.any(team_success):
-                    continue
-                climb_points += team_success.astype(float) * 12.0
-                any_climb = np.logical_or(any_climb, team_success)
+            red_total_fuel_samples = _generate_alliance_samples(red_stats, "total_fuel")
+            blue_total_fuel_samples = _generate_alliance_samples(blue_stats, "total_fuel")
 
-            return climb_points, any_climb
+            red_auto_climb_samples = _generate_alliance_samples(
+                red_stats, "auto_climb_points"
+            )
+            blue_auto_climb_samples = _generate_alliance_samples(
+                blue_stats, "auto_climb_points"
+            )
+            red_endgame_samples = _generate_alliance_samples(red_stats, "endgame")
+            blue_endgame_samples = _generate_alliance_samples(blue_stats, "endgame")
 
-        red_climb_points, red_any_climb = _sample_alliance_climb(red_stats)
-        blue_climb_points, blue_any_climb = _sample_alliance_climb(blue_stats)
+            red_energized_rp = float(np.mean(red_total_fuel_samples >= 100.0))
+            blue_energized_rp = float(np.mean(blue_total_fuel_samples >= 100.0))
 
-        red_total_samples += red_climb_points
-        blue_total_samples += blue_climb_points
+            red_supercharged_rp = float(np.mean(red_total_fuel_samples >= 360.0))
+            blue_supercharged_rp = float(np.mean(blue_total_fuel_samples >= 360.0))
 
-        red_win_pct = float(np.mean(red_total_samples > blue_total_samples))
-        blue_win_pct = 1.0 - red_win_pct
+            red_traversal_rp = float(
+                np.mean((red_auto_climb_samples + red_endgame_samples) >= 50.0)
+            )
+            blue_traversal_rp = float(
+                np.mean((blue_auto_climb_samples + blue_endgame_samples) >= 50.0)
+            )
 
-        red_auto_coral_samples = _generate_alliance_samples(red_stats, "auto_coral")
-        blue_auto_coral_samples = _generate_alliance_samples(blue_stats, "auto_coral")
+            rp_predictions = {
+                "red_energized_rp": red_energized_rp,
+                "blue_energized_rp": blue_energized_rp,
+                "red_supercharged_rp": red_supercharged_rp,
+                "blue_supercharged_rp": blue_supercharged_rp,
+                "red_traversal_rp": red_traversal_rp,
+                "blue_traversal_rp": blue_traversal_rp,
+            }
+        else:
+            red_total_samples = _generate_alliance_samples(red_stats, "total_without_climb")
+            blue_total_samples = _generate_alliance_samples(blue_stats, "total_without_climb")
 
-        red_total_coral_samples = _generate_alliance_samples(red_stats, "total_coral")
-        blue_total_coral_samples = _generate_alliance_samples(blue_stats, "total_coral")
+            def _sample_alliance_climb(
+                team_statistics: Sequence[Dict[str, Tuple[float, float]]]
+            ) -> Tuple[np.ndarray, np.ndarray]:
+                climb_points = np.zeros(n_samples)
+                any_climb = np.zeros(n_samples, dtype=bool)
 
-        red_processor_samples = _generate_alliance_samples(red_stats, "processor")
-        blue_processor_samples = _generate_alliance_samples(blue_stats, "processor")
+                for stats in team_statistics:
+                    climb_rate = float(stats.get("climb_rate", (0.0, 0.0))[0])
+                    if climb_rate <= 0.0:
+                        continue
+                    probability = min(max(climb_rate, 0.0), 1.0)
+                    team_success = rng.random(n_samples) < probability
+                    if not np.any(team_success):
+                        continue
+                    climb_points += team_success.astype(float) * 12.0
+                    any_climb = np.logical_or(any_climb, team_success)
 
-        red_auto_rp = float(np.mean(red_auto_coral_samples >= 1.0))
-        blue_auto_rp = float(np.mean(blue_auto_coral_samples >= 1.0))
+                return climb_points, any_climb
 
-        red_endgame_rp = float(np.mean(red_any_climb))
-        blue_endgame_rp = float(np.mean(blue_any_climb))
+            red_climb_points, red_any_climb = _sample_alliance_climb(red_stats)
+            blue_climb_points, blue_any_climb = _sample_alliance_climb(blue_stats)
 
-        red_w_coral_rp = float(np.mean(red_total_coral_samples >= 27.0))
-        blue_w_coral_rp = float(np.mean(blue_total_coral_samples >= 27.0))
+            red_total_samples += red_climb_points
+            blue_total_samples += blue_climb_points
 
-        red_r_coral_rp = float(
-            np.mean(
-                np.logical_or(
-                    np.logical_and(
-                        red_total_coral_samples >= 15.0, red_processor_samples >= 2.0
-                    ),
-                    red_total_coral_samples >= 20.0,
+            red_win_pct = float(np.mean(red_total_samples > blue_total_samples))
+            blue_win_pct = 1.0 - red_win_pct
+
+            red_auto_coral_samples = _generate_alliance_samples(red_stats, "auto_coral")
+            blue_auto_coral_samples = _generate_alliance_samples(blue_stats, "auto_coral")
+
+            red_total_coral_samples = _generate_alliance_samples(red_stats, "total_coral")
+            blue_total_coral_samples = _generate_alliance_samples(blue_stats, "total_coral")
+
+            red_processor_samples = _generate_alliance_samples(red_stats, "processor")
+            blue_processor_samples = _generate_alliance_samples(blue_stats, "processor")
+
+            red_auto_rp = float(np.mean(red_auto_coral_samples >= 1.0))
+            blue_auto_rp = float(np.mean(blue_auto_coral_samples >= 1.0))
+
+            red_endgame_rp = float(np.mean(red_any_climb))
+            blue_endgame_rp = float(np.mean(blue_any_climb))
+
+            red_w_coral_rp = float(np.mean(red_total_coral_samples >= 27.0))
+            blue_w_coral_rp = float(np.mean(blue_total_coral_samples >= 27.0))
+
+            red_r_coral_rp = float(
+                np.mean(
+                    np.logical_or(
+                        np.logical_and(
+                            red_total_coral_samples >= 15.0, red_processor_samples >= 2.0
+                        ),
+                        red_total_coral_samples >= 20.0,
+                    )
                 )
             )
-        )
-        blue_r_coral_rp = float(
-            np.mean(
-                np.logical_or(
-                    np.logical_and(
-                        blue_total_coral_samples >= 15.0, blue_processor_samples >= 2.0
-                    ),
-                    blue_total_coral_samples >= 20.0,
+            blue_r_coral_rp = float(
+                np.mean(
+                    np.logical_or(
+                        np.logical_and(
+                            blue_total_coral_samples >= 15.0, blue_processor_samples >= 2.0
+                        ),
+                        blue_total_coral_samples >= 20.0,
+                    )
                 )
             )
-        )
 
-        rp_predictions = {
-            "red_auto_rp": red_auto_rp,
-            "blue_auto_rp": blue_auto_rp,
-            "red_endgame_rp": red_endgame_rp,
-            "blue_endgame_rp": blue_endgame_rp,
-            "red_w_coral_rp": red_w_coral_rp,
-            "blue_w_coral_rp": blue_w_coral_rp,
-            "red_r_coral_rp": red_r_coral_rp,
-            "blue_r_coral_rp": blue_r_coral_rp,
-        }
+            rp_predictions = {
+                "red_auto_rp": red_auto_rp,
+                "blue_auto_rp": blue_auto_rp,
+                "red_endgame_rp": red_endgame_rp,
+                "blue_endgame_rp": blue_endgame_rp,
+                "red_w_coral_rp": red_w_coral_rp,
+                "blue_w_coral_rp": blue_w_coral_rp,
+                "red_r_coral_rp": red_r_coral_rp,
+                "blue_r_coral_rp": blue_r_coral_rp,
+            }
 
         for alliance_org_id in alliance_organization_ids:
             existing_prediction = await session.get(

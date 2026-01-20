@@ -30,7 +30,9 @@ class TBASyncError(RuntimeError):
     """Raised when a synchronisation task cannot be completed."""
 
 
-async def update_team_list(session: AsyncSession) -> Dict[str, int]:
+async def update_team_list(
+    session: AsyncSession, *, commit: bool = True
+) -> Dict[str, int]:
     """Synchronise the list of FRC teams from The Blue Alliance."""
 
     if not TBA_API_KEY:
@@ -86,7 +88,10 @@ async def update_team_list(session: AsyncSession) -> Dict[str, int]:
         for team in teams_to_add:
             session.add(team)
 
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
 
     logger.info(
         "Team sync complete: %d added, %d updated, %d processed.",

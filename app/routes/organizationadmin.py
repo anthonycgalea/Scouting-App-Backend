@@ -8,6 +8,7 @@ from app.services.event import get_scouting_alliance_organization_ids
 from app.services.tba_sync import (
     TBASyncError,
     import_event_registration_for_event,
+    update_team_list,
 )
 from dotenv import load_dotenv
 import os, httpx
@@ -1389,22 +1390,122 @@ async def createOrganizationEvent(
         await session.exec(deactivate_statement)
 
     try:
+        await update_team_list(session, commit=False)
         await import_event_registration_for_event(
             newOrgEvent.event_key,
             session,
+            commit=False,
+        )
+        await _sync_match_schedule_for_event(
+            session,
+            event_key=newOrgEvent.event_key,
+            organization_id=command.OrganizationId,
             commit=False,
         )
     except (TBASyncError, httpx.HTTPError) as exc:
         await session.rollback()
         raise HTTPException(
             status_code=502,
-            detail="Failed to synchronise registration data for the event",
+            detail="Failed to synchronise event data for the event",
         ) from exc
 
     await session.commit()
     await session.refresh(newOrgEvent)
 
     return newOrgEvent
+
+async def _sync_match_schedule_for_event(
+    session: AsyncSession,
+    *,
+    event_key: str,
+    organization_id: int,
+    commit: bool = True,
+) -> int:
+    if not TBA_API_KEY:
+        raise TBASyncError("TBA_API_KEY environment variable is not configured.")
+
+    statement = select(MatchSchedule).where(MatchSchedule.event_key == event_key)
+    result = await session.exec(statement)
+    existing_matches = result.all()
+    existing_match_assignments = {
+        (match.match_number, match.match_level): (
+            int(match.red1_id),
+            int(match.red2_id),
+            int(match.red3_id),
+            int(match.blue1_id),
+            int(match.blue2_id),
+            int(match.blue3_id),
+        )
+        for match in existing_matches
+    }
+    for match in existing_matches:
+        await session.delete(match)
+
+    headers = {"X-TBA-Auth-Key": TBA_API_KEY, "accept": "application/json"}
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            MATCH_SCHEDULE_URL.format(event_key=event_key), headers=headers
+        )
+        response.raise_for_status()
+        match_schedule_json = response.json()
+
+    matches_for_queue: Set[Tuple[int, str]] = set()
+    for match in match_schedule_json:
+        alliances = match["alliances"]
+        match_level: str = match["comp_level"]
+        if match_level == "sf":
+            match_number = int(match["set_number"])
+        else:
+            match_number = int(match["match_number"])
+
+        redteams = alliances["red"]["team_keys"]
+        blueteams = alliances["blue"]["team_keys"]
+
+        red1 = int(redteams[0][3:])
+        red2 = int(redteams[1][3:])
+        red3 = int(redteams[2][3:])
+        blue1 = int(blueteams[0][3:])
+        blue2 = int(blueteams[1][3:])
+        blue3 = int(blueteams[2][3:])
+
+        match_record = MatchSchedule(
+            event_key=event_key,
+            match_number=match_number,
+            match_level=match_level,
+            red1_id=red1,
+            red2_id=red2,
+            red3_id=red3,
+            blue1_id=blue1,
+            blue2_id=blue2,
+            blue3_id=blue3,
+        )
+        session.add(match_record)
+
+        match_key = (match_number, match_level)
+        new_assignment = (red1, red2, red3, blue1, blue2, blue3)
+        previous_assignment = existing_match_assignments.get(match_key)
+        if previous_assignment is not None and previous_assignment != new_assignment:
+            matches_for_queue.add(match_key)
+
+    await session.flush()
+
+    await _enqueue_matches_for_prediction_queue(
+        session,
+        event_key=event_key,
+        organization_id=organization_id,
+        matches=matches_for_queue,
+    )
+
+    await _queue_matches_missing_predictions(
+        session,
+        event_key=event_key,
+        organization_id=organization_id,
+    )
+
+    if commit:
+        await session.commit()
+
+    return len(match_schedule_json)
 
 @router.post("/event/matches/sync")
 async def get_match_schedule(
@@ -1455,90 +1556,13 @@ async def get_match_schedule(
 
     event_key = active_event.event_key
 
-    # 1. Delete existing matches for the event
-    statement = select(MatchSchedule).where(MatchSchedule.event_key == event_key)
-    result = await session.exec(statement)
-    existing_matches = result.all()
-    existing_match_assignments = {
-        (match.match_number, match.match_level): (
-            int(match.red1_id),
-            int(match.red2_id),
-            int(match.red3_id),
-            int(match.blue1_id),
-            int(match.blue2_id),
-            int(match.blue3_id),
-        )
-        for match in existing_matches
-    }
-    for match in existing_matches:
-        await session.delete(match)
-    await session.commit()
-
-    # 2. Fetch match schedule from TBA
-    headers = {"X-TBA-Auth-Key": TBA_API_KEY, "accept": "application/json"}
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            MATCH_SCHEDULE_URL.format(event_key=event_key), headers=headers
-        )
-        match_schedule_json = response.json()
-
-    # 3. Insert matches into DB
-    matches_for_queue: Set[Tuple[int, str]] = set()
-    for match in match_schedule_json:
-        alliances = match["alliances"]
-        match_level: str = match["comp_level"]
-        if match_level == "sf":
-            match_number = int(match["set_number"])
-        else:
-            match_number = int(match["match_number"])
-
-        redteams = alliances["red"]["team_keys"]
-        blueteams = alliances["blue"]["team_keys"]
-
-        red1 = int(redteams[0][3:])
-        red2 = int(redteams[1][3:])
-        red3 = int(redteams[2][3:])
-        blue1 = int(blueteams[0][3:])
-        blue2 = int(blueteams[1][3:])
-        blue3 = int(blueteams[2][3:])
-
-        match_record = MatchSchedule(
-            event_key=event_key,
-            match_number=match_number,
-            match_level=match["comp_level"],
-            red1_id=red1,
-            red2_id=red2,
-            red3_id=red3,
-            blue1_id=blue1,
-            blue2_id=blue2,
-            blue3_id=blue3,
-        )
-        session.add(match_record)
-
-        match_key = (match_number, match_level)
-        new_assignment = (red1, red2, red3, blue1, blue2, blue3)
-        previous_assignment = existing_match_assignments.get(match_key)
-        if previous_assignment is not None and previous_assignment != new_assignment:
-            matches_for_queue.add(match_key)
-
-    await session.flush()
-
-    await _enqueue_matches_for_prediction_queue(
-        session,
-        event_key=event_key,
-        organization_id=int(membership.organization_id),
-        matches=matches_for_queue,
-    )
-
-    await _queue_matches_missing_predictions(
+    matches_inserted = await _sync_match_schedule_for_event(
         session,
         event_key=event_key,
         organization_id=int(membership.organization_id),
     )
 
-    # 4. Commit all new matches and queued predictions
-    await session.commit()
-    return {"status": "success", "event": event_key, "matches_inserted": len(match_schedule_json)}
+    return {"status": "success", "event": event_key, "matches_inserted": matches_inserted}
 
 
 @router.post("/uploadData")

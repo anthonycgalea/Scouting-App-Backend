@@ -179,6 +179,9 @@ class PhaseMetrics(SQLModel):
     net: MetricStatistics = Field(default_factory=MetricStatistics)
     processor: MetricStatistics = Field(default_factory=MetricStatistics)
     total_points: MetricStatistics = Field(default_factory=MetricStatistics)
+    fuel_scored: MetricStatistics = Field(default_factory=MetricStatistics)
+    fuel_passed: MetricStatistics = Field(default_factory=MetricStatistics)
+    climb_points: MetricStatistics = Field(default_factory=MetricStatistics)
 
 
 class TeamMatchPreview(SQLModel):
@@ -562,6 +565,19 @@ PHASE_METRIC_KEYS: Tuple[str, ...] = (
     "total_points",
 )
 
+FUEL_PHASE_METRIC_KEYS: Tuple[str, ...] = (
+    "fuel_scored",
+    "fuel_passed",
+    "climb_points",
+    "total_points",
+)
+
+FUEL_TELEOP_METRIC_KEYS: Tuple[str, ...] = (
+    "fuel_scored",
+    "fuel_passed",
+    "total_points",
+)
+
 
 LEVEL_KEYS: Tuple[str, ...] = (
     "level4",
@@ -596,6 +612,18 @@ AUTO_ADDITIONAL_FIELDS: Tuple[Tuple[str, str], ...] = (
 TELEOP_ADDITIONAL_FIELDS: Tuple[Tuple[str, str], ...] = (
     ("tNet", "net"),
     ("tProcessor", "processor"),
+)
+
+
+AUTO_FUEL_FIELDS: Tuple[Tuple[str, str], ...] = (
+    ("autoFuel", "fuel_scored"),
+    ("autoPass", "fuel_passed"),
+)
+
+
+TELEOP_FUEL_FIELDS: Tuple[Tuple[str, str], ...] = (
+    ("teleopFuel", "fuel_scored"),
+    ("teleopPass", "fuel_passed"),
 )
 
 
@@ -636,20 +664,28 @@ def _initialize_phase_metric_lists() -> Dict[str, List[float]]:
     return {key: [] for key in PHASE_METRIC_KEYS}
 
 
+def _initialize_metric_lists(keys: Sequence[str]) -> Dict[str, List[float]]:
+    return {key: [] for key in keys}
+
+
 def _initialize_count_lists(field_mapping: Tuple[Tuple[str, str], ...]) -> Dict[str, List[float]]:
     return {field: [] for field, _ in field_mapping}
 
 
 def _phase_metrics_from_lists(metric_lists: Dict[str, List[float]]) -> PhaseMetrics:
-    return PhaseMetrics(
-        level4=_calculate_metric_statistics(metric_lists["level4"]),
-        level3=_calculate_metric_statistics(metric_lists["level3"]),
-        level2=_calculate_metric_statistics(metric_lists["level2"]),
-        level1=_calculate_metric_statistics(metric_lists["level1"]),
-        net=_calculate_metric_statistics(metric_lists["net"]),
-        processor=_calculate_metric_statistics(metric_lists["processor"]),
-        total_points=_calculate_metric_statistics(metric_lists["total_points"]),
-    )
+    phase_metrics = PhaseMetrics()
+    for key, values in metric_lists.items():
+        if hasattr(phase_metrics, key):
+            setattr(phase_metrics, key, _calculate_metric_statistics(values))
+    return phase_metrics
+
+
+def _is_fuel_metric_model(match_model: type[SQLModel]) -> bool:
+    return "autoFuel" in _get_model_field_order(match_model)
+
+
+def _empty_level_counts() -> Dict[str, float]:
+    return {level: 0.0 for level in LEVEL_KEYS}
 
 
 def _average_counts(
@@ -668,13 +704,61 @@ def _build_team_preview_from_records(
     auto_weights: Dict[str, float],
     teleop_weights: Dict[str, float],
     endgame_points: Dict[str, float],
+    match_model: type[SQLModel],
 ) -> Tuple[TeamMatchPreview, Dict[str, Dict[str, float]]]:
+    if _is_fuel_metric_model(match_model):
+        auto_metric_lists = _initialize_metric_lists(FUEL_PHASE_METRIC_KEYS)
+        teleop_metric_lists = _initialize_metric_lists(FUEL_TELEOP_METRIC_KEYS)
+        endgame_values: List[float] = []
+        total_match_points: List[float] = []
+
+        for record in records:
+            auto_total = 0.0
+            teleop_total = 0.0
+
+            for field, alias in AUTO_FUEL_FIELDS:
+                count = extract_field_value(record, field)
+                auto_metric_lists[alias].append(count)
+                auto_total += count * auto_weights.get(field, 0.0)
+
+            auto_climb_count = extract_field_value(record, "autoClimb")
+            auto_climb_points = auto_climb_count * auto_weights.get("autoClimb", 0.0)
+            auto_metric_lists["climb_points"].append(auto_climb_points)
+            auto_total += auto_climb_points
+
+            auto_metric_lists["total_points"].append(auto_total)
+
+            for field, alias in TELEOP_FUEL_FIELDS:
+                count = extract_field_value(record, field)
+                teleop_metric_lists[alias].append(count)
+                teleop_total += count * teleop_weights.get(field, 0.0)
+
+            teleop_metric_lists["total_points"].append(teleop_total)
+
+            endgame_value = calculate_endgame_points(getattr(record, "endgame", None), endgame_points)
+            endgame_values.append(endgame_value)
+            total_match_points.append(auto_total + teleop_total + endgame_value)
+
+        team_preview = TeamMatchPreview(
+            team_number=team_number,
+            auto=_phase_metrics_from_lists(auto_metric_lists),
+            teleop=_phase_metrics_from_lists(teleop_metric_lists),
+            endgame=_calculate_metric_statistics(endgame_values),
+            total_points=_calculate_metric_statistics(total_match_points),
+        )
+
+        counts_average = {
+            "auto": _empty_level_counts(),
+            "teleop": _empty_level_counts(),
+        }
+        return team_preview, counts_average
+
     auto_metric_lists = _initialize_phase_metric_lists()
     teleop_metric_lists = _initialize_phase_metric_lists()
     auto_count_lists = _initialize_count_lists(AUTO_LEVEL_FIELDS)
     teleop_count_lists = _initialize_count_lists(TELEOP_LEVEL_FIELDS)
-    endgame_values: List[float] = []
-    total_match_points: List[float] = []
+    endgame_values = []
+    total_match_points = []
 
     for record in records:
         auto_total = 0.0
@@ -832,6 +916,7 @@ async def _build_alliance_preview(
             auto_weights,
             teleop_weights,
             endgame_points,
+            match_model,
         )
         teams.append(team_preview)
         level_counts.append(counts_average)

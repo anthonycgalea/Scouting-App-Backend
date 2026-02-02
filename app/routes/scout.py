@@ -227,6 +227,21 @@ PrescoutResponse = reduce(
     prescout_response_types[0],
 )
 
+prescout_request_types: List[Type[MatchData]] = []
+
+for prescout_model in PRESCOUT_MODELS_BY_YEAR.values():
+    if prescout_model not in prescout_request_types:
+        prescout_request_types.append(prescout_model)
+
+if MatchData not in prescout_request_types:
+    prescout_request_types.append(MatchData)
+
+PrescoutRequest = reduce(
+    lambda accumulated, next_model: accumulated | next_model,
+    prescout_request_types[1:],
+    prescout_request_types[0],
+)
+
 
 superscout_response_types: List[Type[SuperScoutData]] = []
 
@@ -315,7 +330,7 @@ async def list_prescout_records(
 
 @router.post("/prescout", response_model=PrescoutResponse, status_code=201)
 async def create_prescout_entry(
-    prescout: Dict[str, Any] = Body(...),
+    prescout: PrescoutRequest = Body(...),
     user=Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
@@ -324,7 +339,7 @@ async def create_prescout_entry(
 
 @router.post("/prescout/batch")
 async def create_multiple_prescout_entries(
-    prescouts: List[Dict[str, Any]] = Body(...),
+    prescouts: List[PrescoutRequest] = Body(...),
     user=Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):

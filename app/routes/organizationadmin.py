@@ -247,6 +247,7 @@ from app.services.event import (
     require_lead_or_admin_membership,
     serialize_match_data_for_export,
 )
+from app.services.season import get_season_by_year_or_404
 from app.services.scout import (
     PIT_SCOUT_MODELS_BY_YEAR,
     PRESCOUT_MODELS_BY_YEAR,
@@ -1735,6 +1736,7 @@ async def upload_match_data(
     created = 0
     updated = 0
     matches_for_queue: Set[Tuple[int, str, int]] = set()
+    season_by_event_key: Dict[str, int] = {}
 
     value_headers: Dict[str, str] = {
         column: header if isinstance(header, str) else ""
@@ -1758,6 +1760,22 @@ async def upload_match_data(
             )
 
     match_model = MatchData2025 if target_year == 2025 else MatchData2026
+
+    async def get_season_id_for_event(event_key: str) -> int:
+        cached = season_by_event_key.get(event_key)
+        if cached is not None:
+            return cached
+        statement = select(FRCEvent.year).where(FRCEvent.event_key == event_key)
+        result = await session.execute(statement)
+        event_year = result.scalar_one_or_none()
+        if event_year is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No event found for event key {event_key}",
+            )
+        season = await get_season_by_year_or_404(session, event_year)
+        season_by_event_key[event_key] = season.id
+        return season.id
 
     for row in reader:
         if not any((value or "").strip() for value in row.values()):
@@ -1790,6 +1808,8 @@ async def upload_match_data(
         team_number = parse_int(team_number_raw, default=None)
         if team_number is None:
             raise HTTPException(status_code=400, detail="Team # must be an integer")
+
+        season_id = await get_season_id_for_event(event_key)
 
         if target_year == 2025:
             endgame = Endgame2025.NONE
@@ -1826,7 +1846,7 @@ async def upload_match_data(
         notes_value = get_row_value("notes").strip()
 
         data = {
-            "season": 1,
+            "season": season_id,
             "team_number": team_number,
             "event_key": event_key,
             "match_number": match_number,

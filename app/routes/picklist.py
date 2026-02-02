@@ -51,6 +51,15 @@ PickListGeneratorResponse = reduce(
 )
 
 
+def filter_generator_payload(
+    generator_model: Type[PickListGenerator],
+    payload: Dict[str, Any],
+    disallowed_fields: set[str],
+) -> Dict[str, Any]:
+    allowed_fields = set(generator_model.model_fields) - disallowed_fields
+    return {key: value for key, value in payload.items() if key in allowed_fields}
+
+
 class PickListRankPayload(SQLModel):
     rank: int
     team_number: int
@@ -384,6 +393,11 @@ async def create_picklist_generator(
         "notes": payload.pop("notes"),
         "favorited": payload.pop("favorited"),
     }
+    payload = filter_generator_payload(
+        generator_model,
+        payload,
+        {"id", "season", "organization_id", "timestamp", *base_fields.keys()},
+    )
 
     generator = generator_model(
         season=season.id,
@@ -448,8 +462,11 @@ async def update_picklist_generator(
         raise HTTPException(status_code=404, detail="Pick list generator not found.")
 
     payload = request.model_dump(exclude_none=True)
-    for field in ("id", "season", "organization_id", "timestamp"):
-        payload.pop(field, None)
+    payload = filter_generator_payload(
+        generator_model,
+        payload,
+        {"id", "season", "organization_id", "timestamp"},
+    )
 
     for field, value in payload.items():
         setattr(generator, field, value)

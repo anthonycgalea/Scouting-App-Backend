@@ -172,12 +172,12 @@ class MetricStatistics(SQLModel):
 
 
 class PhaseMetrics(SQLModel):
-    level4: MetricStatistics = Field(default_factory=MetricStatistics)
-    level3: MetricStatistics = Field(default_factory=MetricStatistics)
-    level2: MetricStatistics = Field(default_factory=MetricStatistics)
-    level1: MetricStatistics = Field(default_factory=MetricStatistics)
-    net: MetricStatistics = Field(default_factory=MetricStatistics)
-    processor: MetricStatistics = Field(default_factory=MetricStatistics)
+    level4: Optional[MetricStatistics] = None
+    level3: Optional[MetricStatistics] = None
+    level2: Optional[MetricStatistics] = None
+    level1: Optional[MetricStatistics] = None
+    net: Optional[MetricStatistics] = None
+    processor: Optional[MetricStatistics] = None
     total_points: MetricStatistics = Field(default_factory=MetricStatistics)
     fuel_scored: MetricStatistics = Field(default_factory=MetricStatistics)
     fuel_passed: MetricStatistics = Field(default_factory=MetricStatistics)
@@ -193,10 +193,10 @@ class TeamMatchPreview(SQLModel):
 
 
 class LevelAverages(SQLModel):
-    level4: float = 0.0
-    level3: float = 0.0
-    level2: float = 0.0
-    level1: float = 0.0
+    level4: Optional[float] = None
+    level3: Optional[float] = None
+    level2: Optional[float] = None
+    level1: Optional[float] = None
 
 
 class AllianceLevelAverages(SQLModel):
@@ -207,7 +207,7 @@ class AllianceLevelAverages(SQLModel):
 
 class AllianceMatchPreview(SQLModel):
     teams: List[TeamMatchPreview]
-    alliance_level_averages: AllianceLevelAverages
+    alliance_level_averages: Optional[AllianceLevelAverages] = None
 
 
 class MatchPreviewResponse(SQLModel):
@@ -586,6 +586,15 @@ LEVEL_KEYS: Tuple[str, ...] = (
     "level1",
 )
 
+LEVEL_METRIC_FIELDS: Tuple[str, ...] = (
+    "level4",
+    "level3",
+    "level2",
+    "level1",
+    "net",
+    "processor",
+)
+
 
 AUTO_LEVEL_FIELDS: Tuple[Tuple[str, str], ...] = (
     ("al4c", "level4"),
@@ -873,6 +882,12 @@ def _calculate_alliance_level_averages(
     )
 
 
+def _strip_level_metrics(preview: TeamMatchPreview) -> None:
+    for phase_metrics in (preview.auto, preview.teleop):
+        for field in LEVEL_METRIC_FIELDS:
+            setattr(phase_metrics, field, None)
+
+
 async def _fetch_team_records(
     session: AsyncSession,
     match_model: type[SQLModel],
@@ -898,6 +913,7 @@ async def _build_alliance_preview(
     auto_weights: Dict[str, float],
     teleop_weights: Dict[str, float],
     endgame_points: Dict[str, float],
+    include_levels: bool = True,
 ) -> AllianceMatchPreview:
     teams: List[TeamMatchPreview] = []
     level_counts: List[Dict[str, Dict[str, float]]] = []
@@ -918,10 +934,15 @@ async def _build_alliance_preview(
             endgame_points,
             match_model,
         )
+        if not include_levels:
+            _strip_level_metrics(team_preview)
         teams.append(team_preview)
-        level_counts.append(counts_average)
+        if include_levels:
+            level_counts.append(counts_average)
 
-    alliance_level_averages = _calculate_alliance_level_averages(level_counts)
+    alliance_level_averages = None
+    if include_levels:
+        alliance_level_averages = _calculate_alliance_level_averages(level_counts)
     return AllianceMatchPreview(teams=teams, alliance_level_averages=alliance_level_averages)
 
 
@@ -949,6 +970,8 @@ async def get_match_preview(
     teleop_weights = resolve_weight_mapping(match_model, MATCH_MODEL_TELEOP_WEIGHTS_ATTR, DEFAULT_TELEOP_WEIGHTS)
     endgame_points = resolve_endgame_points_mapping(match_model, MATCH_MODEL_ENDGAME_POINTS_ATTR, DEFAULT_ENDGAME_POINTS)
 
+    include_levels = season.id != 2
+
     red_teams = [match.red1_id, match.red2_id, match.red3_id]
     blue_teams = [match.blue1_id, match.blue2_id, match.blue3_id]
 
@@ -961,6 +984,7 @@ async def get_match_preview(
         auto_weights,
         teleop_weights,
         endgame_points,
+        include_levels=include_levels,
     )
 
     blue_preview = await _build_alliance_preview(
@@ -972,6 +996,7 @@ async def get_match_preview(
         auto_weights,
         teleop_weights,
         endgame_points,
+        include_levels=include_levels,
     )
 
     return MatchPreviewResponse(

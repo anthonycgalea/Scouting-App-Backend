@@ -51,7 +51,11 @@ async def get_single_match(
     return await get_match_or_404(session, event_code, matchNumber, matchLevel)
 
 
-@router.get("/match/{matchLevel}/{matchNumber}/preview", tags=["Scout"])
+@router.get(
+    "/match/{matchLevel}/{matchNumber}/preview",
+    tags=["Scout"],
+    response_model_exclude_none=True,
+)
 async def get_match_preview_endpoint(
     matchNumber: int,
     matchLevel: str,

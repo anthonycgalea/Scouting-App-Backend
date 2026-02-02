@@ -71,6 +71,36 @@ MATCH_DATA_2025_COLUMN_ALIASES = {
     "endgame": ["endgame"],
 }
 
+MATCH_DATA_2026_COLUMNS = [
+    "team_number",
+    "event_key",
+    "match_number",
+    "match_level",
+    "notes",
+    "autoFuel",
+    "autoPass",
+    "autoClimb",
+    "teleopFuel",
+    "teleopPass",
+    "endgame",
+]
+
+MATCH_DATA_2026_OPTIONAL_COLUMNS = {"notes", "event_key"}
+
+MATCH_DATA_2026_COLUMN_ALIASES = {
+    "team_number": ["team_number", "Team #"],
+    "event_key": ["event_key", "Event Key"],
+    "match_number": ["match_number", "Match #"],
+    "match_level": ["match_level", "Match Level"],
+    "notes": ["notes", "Notes"],
+    "autoFuel": ["autoFuel", "auto_fuel", "Auto Fuel"],
+    "autoPass": ["autoPass", "auto_pass", "Auto Pass"],
+    "autoClimb": ["autoClimb", "auto_climb", "Auto Climb"],
+    "teleopFuel": ["teleopFuel", "teleop_fuel", "Teleop Fuel"],
+    "teleopPass": ["teleopPass", "teleop_pass", "Teleop Pass"],
+    "endgame": ["endgame"],
+}
+
 LegacyEndgameHeaders = Tuple[str, str]
 ResolvedHeader = Union[str, LegacyEndgameHeaders]
 
@@ -142,6 +172,41 @@ def resolve_match_data_2025_headers(
 
     return header_map, missing
 
+
+def resolve_match_data_2026_headers(
+    fieldnames: Sequence[str],
+) -> Tuple[Dict[str, ResolvedHeader], List[str]]:
+    """Map expected columns to the actual CSV headers and report missing ones."""
+
+    header_map: Dict[str, ResolvedHeader] = {}
+    missing: List[str] = []
+
+    exact_lookup, lowercase_lookup = _normalize_header_lookup(fieldnames)
+
+    for column in MATCH_DATA_2026_COLUMNS:
+        aliases = MATCH_DATA_2026_COLUMN_ALIASES.get(column, [column])
+        resolved_header: Union[str, None] = None
+
+        for alias in aliases:
+            if alias in exact_lookup:
+                resolved_header = exact_lookup[alias]
+                break
+            alias_lower = alias.lower()
+            if alias_lower in lowercase_lookup:
+                resolved_header = lowercase_lookup[alias_lower]
+                break
+
+        if resolved_header is not None:
+            header_map[column] = resolved_header
+            continue
+
+        if column in MATCH_DATA_2026_OPTIONAL_COLUMNS:
+            header_map[column] = ""
+        else:
+            missing.append(aliases[0])
+
+    return header_map, missing
+
 router = APIRouter(
     prefix="/organization",
     tags=["Organization"]
@@ -170,6 +235,7 @@ from app.models import (
     User,
     UserOrganization,
     Endgame2025,
+    Endgame2026,
 )
 from app.models.user_organization import UserRole
 from app.services.event import (
@@ -1638,11 +1704,20 @@ async def upload_match_data(
     if not reader.fieldnames:
         raise HTTPException(status_code=400, detail="CSV file is missing headers")
 
-    header_map, missing_columns = resolve_match_data_2025_headers(reader.fieldnames)
-    if missing_columns:
+    header_map_2026, missing_columns_2026 = resolve_match_data_2026_headers(reader.fieldnames)
+    header_map_2025, missing_columns_2025 = resolve_match_data_2025_headers(reader.fieldnames)
+
+    if not missing_columns_2026:
+        header_map = header_map_2026
+        target_year = 2026
+    elif not missing_columns_2025:
+        header_map = header_map_2025
+        target_year = 2025
+    else:
         raise HTTPException(
             status_code=400,
-            detail="CSV file is missing required columns: " + ", ".join(missing_columns),
+            detail="CSV file is missing required columns: "
+            + ", ".join(sorted(set(missing_columns_2025 + missing_columns_2026))),
         )
 
     def parse_int(value: str, default: int = 0) -> int:
@@ -1668,6 +1743,22 @@ async def upload_match_data(
     }
     endgame_header = header_map.get("endgame")
 
+    active_event_key = None
+    if value_headers.get("event_key", "") == "":
+        statement = select(OrganizationEvent.event_key).where(
+            OrganizationEvent.organization_id == membership.organization_id,
+            OrganizationEvent.active == True,  # noqa: E712 - SQLAlchemy boolean comparison
+        )
+        result = await session.execute(statement)
+        active_event_key = result.scalar_one_or_none()
+        if active_event_key is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No active event configured for this organization",
+            )
+
+    match_model = MatchData2025 if target_year == 2025 else MatchData2026
+
     for row in reader:
         if not any((value or "").strip() for value in row.values()):
             continue
@@ -1678,13 +1769,17 @@ async def upload_match_data(
                 return ""
             return row.get(header) or ""
 
-        event_key = get_row_value("event_key").strip()
+        event_key = get_row_value("event_key").strip() if value_headers.get("event_key") else ""
         match_level = get_row_value("match_level").strip()
         match_number_raw = get_row_value("match_number")
         team_number_raw = get_row_value("team_number")
 
         if not event_key:
-            raise HTTPException(status_code=400, detail="Event Key is required for each row")
+            if active_event_key is None:
+                raise HTTPException(
+                    status_code=400, detail="Event Key is required for each row"
+                )
+            event_key = active_event_key
         if not match_level:
             raise HTTPException(status_code=400, detail="Match Level is required for each row")
 
@@ -1696,19 +1791,32 @@ async def upload_match_data(
         if team_number is None:
             raise HTTPException(status_code=400, detail="Team # must be an integer")
 
-        endgame = Endgame2025.NONE
-        if isinstance(endgame_header, tuple):
-            shallow_header, deep_header = endgame_header
-            if parse_int(row.get(deep_header)) == 1:
-                endgame = Endgame2025.DEEP
-            elif parse_int(row.get(shallow_header)) == 1:
-                endgame = Endgame2025.SHALLOW
+        if target_year == 2025:
+            endgame = Endgame2025.NONE
+            if isinstance(endgame_header, tuple):
+                shallow_header, deep_header = endgame_header
+                if parse_int(row.get(deep_header)) == 1:
+                    endgame = Endgame2025.DEEP
+                elif parse_int(row.get(shallow_header)) == 1:
+                    endgame = Endgame2025.SHALLOW
+            else:
+                raw_endgame = (row.get(endgame_header) or "").strip() if endgame_header else ""
+                if raw_endgame:
+                    normalized_endgame = raw_endgame.upper()
+                    try:
+                        endgame = Endgame2025(normalized_endgame)
+                    except ValueError:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Invalid endgame value: {raw_endgame}",
+                        )
         else:
+            endgame = Endgame2026.NONE
             raw_endgame = (row.get(endgame_header) or "").strip() if endgame_header else ""
             if raw_endgame:
                 normalized_endgame = raw_endgame.upper()
                 try:
-                    endgame = Endgame2025(normalized_endgame)
+                    endgame = Endgame2026(normalized_endgame)
                 except ValueError:
                     raise HTTPException(
                         status_code=400,
@@ -1727,23 +1835,39 @@ async def upload_match_data(
             "organization_id": organization_id,
             "notes": notes_value,
             "timestamp": datetime.now(),
-            "al4c": parse_int(get_row_value("al4c")),
-            "al3c": parse_int(get_row_value("al3c")),
-            "al2c": parse_int(get_row_value("al2c")),
-            "al1c": parse_int(get_row_value("al1c")),
-            "tl4c": parse_int(get_row_value("tl4c")),
-            "tl3c": parse_int(get_row_value("tl3c")),
-            "tl2c": parse_int(get_row_value("tl2c")),
-            "tl1c": parse_int(get_row_value("tl1c")),
-            "aNet": parse_int(get_row_value("aNet")),
-            "tNet": parse_int(get_row_value("tNet")),
-            "aProcessor": parse_int(get_row_value("aProcessor")),
-            "tProcessor": parse_int(get_row_value("tProcessor")),
             "endgame": endgame,
         }
 
+        if target_year == 2025:
+            data.update(
+                {
+                    "al4c": parse_int(get_row_value("al4c")),
+                    "al3c": parse_int(get_row_value("al3c")),
+                    "al2c": parse_int(get_row_value("al2c")),
+                    "al1c": parse_int(get_row_value("al1c")),
+                    "tl4c": parse_int(get_row_value("tl4c")),
+                    "tl3c": parse_int(get_row_value("tl3c")),
+                    "tl2c": parse_int(get_row_value("tl2c")),
+                    "tl1c": parse_int(get_row_value("tl1c")),
+                    "aNet": parse_int(get_row_value("aNet")),
+                    "tNet": parse_int(get_row_value("tNet")),
+                    "aProcessor": parse_int(get_row_value("aProcessor")),
+                    "tProcessor": parse_int(get_row_value("tProcessor")),
+                }
+            )
+        else:
+            data.update(
+                {
+                    "autoFuel": parse_int(get_row_value("autoFuel")),
+                    "autoPass": parse_int(get_row_value("autoPass")),
+                    "autoClimb": parse_int(get_row_value("autoClimb")),
+                    "teleopFuel": parse_int(get_row_value("teleopFuel")),
+                    "teleopPass": parse_int(get_row_value("teleopPass")),
+                }
+            )
+
         existing_record = await session.get(
-            MatchData2025,
+            match_model,
             (
                 team_number,
                 event_key,
@@ -1759,7 +1883,7 @@ async def upload_match_data(
             session.add(existing_record)
             updated += 1
         else:
-            match_data = MatchData2025(**data)
+            match_data = match_model(**data)
             session.add(match_data)
             created += 1
 
@@ -1777,7 +1901,7 @@ async def upload_match_data(
         await _enqueue_unplayed_matches_for_prediction_queue(
             session,
             match_stub,
-            MatchData2025,
+            match_model,
         )
 
     return {

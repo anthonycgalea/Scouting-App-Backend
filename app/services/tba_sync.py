@@ -175,14 +175,13 @@ async def import_event_registration(year: int, session: AsyncSession) -> Dict[st
         event_type = event.get("event_type")
         event_key = str(event["key"])
 
-        if event_type == 100 and event_key != f"{year}week0":
-            continue
-
         event_name = str(event["name"])
         short_name = str(event["short_name"])
 
         if event_type == 99:
             week = 99
+        elif event_type == 100:
+            week = 0
         elif year < 2026:
             week = 8 if event_type in [3, 4] else int(event["week"] + 1)
         else:

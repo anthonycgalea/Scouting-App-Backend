@@ -394,3 +394,86 @@ async def test_alliance_validations_allow_park_none_discrepancy(monkeypatch):
         assert len(validations) == 3
         assert all(v.validation_status == ValidationStatus.VALID for v in validations)
         assert result["updated_validations"] == 3
+
+
+@pytest.mark.asyncio
+async def test_missing_tba_records_are_fetched_for_active_event_without_pending_validations(
+    monkeypatch,
+):
+    monkeypatch.setenv("TBA_API_KEY", "test-key")
+    monkeypatch.setattr("app.services.scout.httpx.AsyncClient", _DummyAsyncClient)
+
+    async with AsyncSessionLocal() as session:
+        event = FRCEvent(
+            event_key="2025unscouted",
+            event_name="Unscouted Event",
+            short_name="Unscouted",
+            year=2025,
+            week=1,
+        )
+        organization = Organization(name="Unscouted Org", team_number=8888)
+
+        user_id = uuid4()
+        user = User(
+            id=user_id,
+            email="unscouted@example.com",
+            auth_provider="discord",
+            display_name="Unscouted User",
+            logged_in_user_org=None,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+
+        session.add_all([event, organization, user])
+        await session.commit()
+        await session.refresh(organization)
+
+        membership = UserOrganization(
+            user_id=user_id,
+            organization_id=organization.id,
+            role=UserRole.MEMBER,
+        )
+        organization_event = OrganizationEvent(
+            organization_id=organization.id,
+            event_key=event.event_key,
+            public_data=True,
+            active=True,
+        )
+        match_schedule = MatchSchedule(
+            event_key=event.event_key,
+            match_number=3,
+            match_level="qm",
+            red1_id=101,
+            red2_id=102,
+            red3_id=103,
+            blue1_id=201,
+            blue2_id=202,
+            blue3_id=203,
+        )
+
+        session.add_all([membership, organization_event, match_schedule])
+        await session.commit()
+        await session.refresh(membership)
+
+        user_payload = {
+            "id": str(user_id),
+            "displayName": "Unscouted User",
+            "email": "unscouted@example.com",
+            "user_org": membership.id,
+        }
+
+        result = await update_tba_match_data_for_pending_alliances(session, user_payload)
+
+        assert result["updated_matches"] == 1
+        assert result["updated_alliances"] == 2
+        assert result["updated_validations"] == 0
+
+        tba_result = await session.execute(
+            select(TBAMatchData2025).where(
+                TBAMatchData2025.event_key == event.event_key,
+                TBAMatchData2025.match_level == "qm",
+                TBAMatchData2025.match_number == 3,
+            )
+        )
+        records = tba_result.scalars().all()
+        assert len(records) == 2

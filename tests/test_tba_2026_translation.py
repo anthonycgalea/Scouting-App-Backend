@@ -26,3 +26,40 @@ def test_parse_2026_breakdown_maps_tower_status_and_fuel_counts():
     assert parsed["bot1endgame"] == Endgame2026.NONE
     assert parsed["bot2endgame"] == Endgame2026.L2
     assert parsed["bot3endgame"] == Endgame2026.L3
+
+
+
+def test_determine_2026_won_auto_prefers_shift_two_and_four_points():
+    from app.services.scout import _determine_2026_won_auto
+
+    assert (
+        _determine_2026_won_auto(
+            {
+                "hubScore": {
+                    "shift1Points": 20,
+                    "shift2Points": 5,
+                    "shift3Points": 0,
+                    "shift4Points": 0,
+                }
+            }
+        )
+        is True
+    )
+
+
+def test_determine_2026_won_auto_uses_other_alliance_when_ambiguous():
+    from app.services.scout import _determine_2026_won_auto
+
+    assert (
+        _determine_2026_won_auto(
+            {"hubScore": {"shift1Points": 0, "shift2Points": 0, "shift3Points": 0, "shift4Points": 0}},
+            {"hubScore": {"shift1Points": 0, "shift2Points": 10, "shift3Points": 0, "shift4Points": 0}},
+        )
+        is False
+    )
+
+
+def test_determine_2026_won_auto_defaults_to_false_when_unknown():
+    from app.services.scout import _determine_2026_won_auto
+
+    assert _determine_2026_won_auto({}, {}) is False

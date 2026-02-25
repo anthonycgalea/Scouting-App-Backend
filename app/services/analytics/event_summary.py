@@ -111,6 +111,71 @@ def _default_yearly_configs() -> Dict[int, YearlyScoringConfig]:
 
 SCORING_CONFIGS: Dict[int, YearlyScoringConfig] = _default_yearly_configs()
 
+GAME_SPECIFIC_2025_Z_SCORE_FIELDS = {
+    "autonomous_level_4_coral_average",
+    "autonomous_level_3_coral_average",
+    "autonomous_level_2_coral_average",
+    "autonomous_level_1_coral_average",
+    "teleop_level_4_coral_average",
+    "teleop_level_3_coral_average",
+    "teleop_level_2_coral_average",
+    "teleop_level_1_coral_average",
+    "autonomous_net_average",
+    "teleop_net_average",
+    "autonomous_processor_average",
+    "teleop_processor_average",
+    "teleop_cycles_average",
+    "autonomous_coral_average",
+    "autonomous_algae_average",
+    "teleop_coral_average",
+    "teleop_algae_average",
+    "total_coral_average",
+    "total_algae_average",
+    "total_game_pieces_average",
+    "autonomous_level_4_coral_z",
+    "autonomous_level_3_coral_z",
+    "autonomous_level_2_coral_z",
+    "autonomous_level_1_coral_z",
+    "teleop_level_4_coral_z",
+    "teleop_level_3_coral_z",
+    "teleop_level_2_coral_z",
+    "teleop_level_1_coral_z",
+    "autonomous_net_z",
+    "teleop_net_z",
+    "autonomous_processor_z",
+    "teleop_processor_z",
+    "teleop_cycles_z",
+    "autonomous_coral_z",
+    "autonomous_algae_z",
+    "teleop_coral_z",
+    "teleop_algae_z",
+    "total_coral_z",
+    "total_algae_z",
+    "total_game_pieces_z",
+}
+
+
+GAME_SPECIFIC_2026_Z_SCORE_FIELDS = {
+    "autonomous_fuel_average",
+    "teleop_fuel_average",
+    "total_fuel_average",
+    "autonomous_passing_average",
+    "teleop_passing_average",
+    "autonomous_climb_average",
+    "superscout_overall_score_average",
+    "superscout_driver_score_average",
+    "superscout_defense_score_average",
+    "autonomous_fuel_z",
+    "teleop_fuel_z",
+    "total_fuel_z",
+    "autonomous_passing_z",
+    "teleop_passing_z",
+    "autonomous_climb_z",
+    "superscout_overall_score_z",
+    "superscout_driver_score_z",
+    "superscout_defense_score_z",
+}
+
 MATCH_LEVEL_ORDER = {
     "QM": 0,
     "QF": 1,
@@ -144,69 +209,69 @@ class TeamEventZScoreSummary(SQLModel):
     endgame_points_average: float
     game_piece_average: float
     total_points_average: float
-    autonomous_level_4_coral_average: float = 0.0
-    autonomous_level_3_coral_average: float = 0.0
-    autonomous_level_2_coral_average: float = 0.0
-    autonomous_level_1_coral_average: float = 0.0
-    teleop_level_4_coral_average: float = 0.0
-    teleop_level_3_coral_average: float = 0.0
-    teleop_level_2_coral_average: float = 0.0
-    teleop_level_1_coral_average: float = 0.0
-    autonomous_net_average: float = 0.0
-    teleop_net_average: float = 0.0
-    autonomous_processor_average: float = 0.0
-    teleop_processor_average: float = 0.0
-    teleop_cycles_average: float = 0.0
-    autonomous_coral_average: float = 0.0
-    autonomous_algae_average: float = 0.0
-    teleop_coral_average: float = 0.0
-    teleop_algae_average: float = 0.0
-    total_coral_average: float = 0.0
-    total_algae_average: float = 0.0
-    total_game_pieces_average: float = 0.0
+    autonomous_level_4_coral_average: Optional[float] = None
+    autonomous_level_3_coral_average: Optional[float] = None
+    autonomous_level_2_coral_average: Optional[float] = None
+    autonomous_level_1_coral_average: Optional[float] = None
+    teleop_level_4_coral_average: Optional[float] = None
+    teleop_level_3_coral_average: Optional[float] = None
+    teleop_level_2_coral_average: Optional[float] = None
+    teleop_level_1_coral_average: Optional[float] = None
+    autonomous_net_average: Optional[float] = None
+    teleop_net_average: Optional[float] = None
+    autonomous_processor_average: Optional[float] = None
+    teleop_processor_average: Optional[float] = None
+    teleop_cycles_average: Optional[float] = None
+    autonomous_coral_average: Optional[float] = None
+    autonomous_algae_average: Optional[float] = None
+    teleop_coral_average: Optional[float] = None
+    teleop_algae_average: Optional[float] = None
+    total_coral_average: Optional[float] = None
+    total_algae_average: Optional[float] = None
+    total_game_pieces_average: Optional[float] = None
     autonomous_points_z: float = 0.0
     teleop_points_z: float = 0.0
     endgame_points_z: float = 0.0
     game_piece_z: float = 0.0
     total_points_z: float = 0.0
-    autonomous_level_4_coral_z: float = 0.0
-    autonomous_level_3_coral_z: float = 0.0
-    autonomous_level_2_coral_z: float = 0.0
-    autonomous_level_1_coral_z: float = 0.0
-    teleop_level_4_coral_z: float = 0.0
-    teleop_level_3_coral_z: float = 0.0
-    teleop_level_2_coral_z: float = 0.0
-    teleop_level_1_coral_z: float = 0.0
-    autonomous_net_z: float = 0.0
-    teleop_net_z: float = 0.0
-    autonomous_processor_z: float = 0.0
-    teleop_processor_z: float = 0.0
-    teleop_cycles_z: float = 0.0
-    autonomous_coral_z: float = 0.0
-    autonomous_algae_z: float = 0.0
-    teleop_coral_z: float = 0.0
-    teleop_algae_z: float = 0.0
-    total_coral_z: float = 0.0
-    total_algae_z: float = 0.0
-    total_game_pieces_z: float = 0.0
-    autonomous_fuel_average: float = 0.0
-    teleop_fuel_average: float = 0.0
-    total_fuel_average: float = 0.0
-    autonomous_passing_average: float = 0.0
-    teleop_passing_average: float = 0.0
-    autonomous_climb_average: float = 0.0
-    superscout_overall_score_average: float = 0.0
-    superscout_driver_score_average: float = 0.0
-    superscout_defense_score_average: float = 0.0
-    autonomous_fuel_z: float = 0.0
-    teleop_fuel_z: float = 0.0
-    total_fuel_z: float = 0.0
-    autonomous_passing_z: float = 0.0
-    teleop_passing_z: float = 0.0
-    autonomous_climb_z: float = 0.0
-    superscout_overall_score_z: float = 0.0
-    superscout_driver_score_z: float = 0.0
-    superscout_defense_score_z: float = 0.0
+    autonomous_level_4_coral_z: Optional[float] = None
+    autonomous_level_3_coral_z: Optional[float] = None
+    autonomous_level_2_coral_z: Optional[float] = None
+    autonomous_level_1_coral_z: Optional[float] = None
+    teleop_level_4_coral_z: Optional[float] = None
+    teleop_level_3_coral_z: Optional[float] = None
+    teleop_level_2_coral_z: Optional[float] = None
+    teleop_level_1_coral_z: Optional[float] = None
+    autonomous_net_z: Optional[float] = None
+    teleop_net_z: Optional[float] = None
+    autonomous_processor_z: Optional[float] = None
+    teleop_processor_z: Optional[float] = None
+    teleop_cycles_z: Optional[float] = None
+    autonomous_coral_z: Optional[float] = None
+    autonomous_algae_z: Optional[float] = None
+    teleop_coral_z: Optional[float] = None
+    teleop_algae_z: Optional[float] = None
+    total_coral_z: Optional[float] = None
+    total_algae_z: Optional[float] = None
+    total_game_pieces_z: Optional[float] = None
+    autonomous_fuel_average: Optional[float] = None
+    teleop_fuel_average: Optional[float] = None
+    total_fuel_average: Optional[float] = None
+    autonomous_passing_average: Optional[float] = None
+    teleop_passing_average: Optional[float] = None
+    autonomous_climb_average: Optional[float] = None
+    superscout_overall_score_average: Optional[float] = None
+    superscout_driver_score_average: Optional[float] = None
+    superscout_defense_score_average: Optional[float] = None
+    autonomous_fuel_z: Optional[float] = None
+    teleop_fuel_z: Optional[float] = None
+    total_fuel_z: Optional[float] = None
+    autonomous_passing_z: Optional[float] = None
+    teleop_passing_z: Optional[float] = None
+    autonomous_climb_z: Optional[float] = None
+    superscout_overall_score_z: Optional[float] = None
+    superscout_driver_score_z: Optional[float] = None
+    superscout_defense_score_z: Optional[float] = None
 
 
 class DistributionStatistics(SQLModel):
@@ -1018,6 +1083,25 @@ async def get_team_event_z_scores(
             "superscout_defense_score_average",
         ]
     summary_with_z, extremes = _append_z_scores(summary_df, stat_columns)
+
+    if event.year == 2026:
+        summary_with_z = summary_with_z.drop(
+            columns=[
+                column
+                for column in GAME_SPECIFIC_2025_Z_SCORE_FIELDS
+                if column in summary_with_z.columns
+            ],
+            errors="ignore",
+        )
+    else:
+        summary_with_z = summary_with_z.drop(
+            columns=[
+                column
+                for column in GAME_SPECIFIC_2026_Z_SCORE_FIELDS
+                if column in summary_with_z.columns
+            ],
+            errors="ignore",
+        )
     for column in (
         "superscout_overall_score_average",
         "superscout_driver_score_average",

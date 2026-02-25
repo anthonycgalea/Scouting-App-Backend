@@ -24,7 +24,7 @@ class PitScout2026(PitScout, table=True):
     startPositionBumpRight: bool = Field(default=False)
     startPositionTrenchRight: bool = Field(default=False)
     autoPickupCorral: bool = Field(default=False)
-    autoPickupDepot: bool = Field(default=False)
+    autoPickupOutpost: bool = Field(default=False)
     autoFuel: bool = Field(default=False)
     autoFuelCount: int = Field(default=0)
     autoPass: bool = Field(default=False)

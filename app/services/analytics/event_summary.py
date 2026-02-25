@@ -307,6 +307,14 @@ class TeamMatchBreakdown(SQLModel):
     game_pieces: int
     total_points: float
     notes: str
+    autonomous_fuel_scored: float = 0.0
+    total_fuel: float = 0.0
+    autonomous_climbed: float = 0.0
+    teleop_fuel: float = 0.0
+    teleop_passing: float = 0.0
+    superscout_overall: float = 0.0
+    superscout_driver: float = 0.0
+    superscout_defense: Optional[float] = None
 
 
 class TeamMatchHistory(SQLModel):
@@ -683,6 +691,69 @@ async def _attach_2026_superscout_averages(
         if column in merged.columns:
             merged[column] = pd.to_numeric(merged[column], errors="coerce").round(2)
     return merged
+
+
+async def _load_2026_superscout_match_data(
+    session: AsyncSession,
+    user_payload: Dict[str, object],
+) -> pd.DataFrame:
+    event_key = await get_active_event_key_for_user(session, user_payload)
+    event = await get_event_or_404(session, event_key)
+    season = await get_season_by_year_or_404(session, event.year)
+    if event.year != 2026 or season.id != 2:
+        return pd.DataFrame()
+
+    membership = await _get_membership(session, user_payload)
+    alliance_organization_ids = await get_scouting_alliance_organization_ids(
+        session, event_key, membership.organization_id
+    )
+    if not alliance_organization_ids:
+        return pd.DataFrame()
+
+    statement = select(SuperScoutData2026).where(
+        SuperScoutData2026.event_key == event_key,
+        SuperScoutData2026.organization_id.in_(tuple(alliance_organization_ids)),
+    )
+    result = await session.execute(statement)
+    records = result.scalars().all()
+    if not records:
+        return pd.DataFrame()
+
+    rows = []
+    for record in records:
+        defense_rating = getattr(record, "defense_rating", None)
+        played_defense = bool(getattr(record, "played_defense", False))
+        rows.append(
+            {
+                "team_number": getattr(record, "team_number", None),
+                "match_level": str(getattr(record, "match_level", "") or "").strip().upper(),
+                "match_number": getattr(record, "match_number", None),
+                "superscout_overall": getattr(record, "robot_overall", None),
+                "superscout_driver": getattr(record, "driver_rating", None),
+                "superscout_defense": (
+                    defense_rating if played_defense and defense_rating is not None else None
+                ),
+            }
+        )
+
+    superscout_df = pd.DataFrame(rows)
+    if superscout_df.empty:
+        return superscout_df
+
+    for column in ("team_number", "match_number"):
+        superscout_df[column] = pd.to_numeric(
+            superscout_df[column], errors="coerce"
+        ).fillna(0).astype(int)
+
+    return (
+        superscout_df.groupby(["team_number", "match_level", "match_number"], as_index=False)
+        .agg(
+            superscout_overall=("superscout_overall", "mean"),
+            superscout_driver=("superscout_driver", "mean"),
+            superscout_defense=("superscout_defense", "mean"),
+        )
+        .sort_values(["team_number", "match_level", "match_number"])
+    )
 
 
 def _round_stat(value: float) -> float:
@@ -1186,11 +1257,41 @@ async def get_team_event_match_history(
     df["total_points"] = (
         df["autonomous_points"] + df["teleop_points"] + df["endgame_points"]
     )
+    df["autonomous_fuel_scored"] = _ensure_numeric_column(df, "autoFuel")
+    df["autonomous_climbed"] = _ensure_numeric_column(df, "autoClimb")
+    df["teleop_fuel"] = _ensure_numeric_column(df, "teleopFuel")
+    df["teleop_passing"] = _ensure_numeric_column(df, "teleopPass")
+    df["total_fuel"] = df["autonomous_fuel_scored"] + df["teleop_fuel"]
 
     df["team_number"] = pd.to_numeric(df["team_number"], errors="coerce").fillna(0).astype(int)
     df["match_number"] = pd.to_numeric(df["match_number"], errors="coerce").fillna(0).astype(int)
+    df["match_level_normalized"] = (
+        df["match_level"].astype(str).str.strip().str.upper()
+    )
     df["match_level_sort"] = df["match_level"].apply(_sort_match_level)
     df["notes"] = df["notes"].fillna("")
+    df["superscout_overall"] = 0.0
+    df["superscout_driver"] = 0.0
+    df["superscout_defense"] = pd.NA
+
+    superscout_match_df = await _load_2026_superscout_match_data(session, user_payload)
+    if not superscout_match_df.empty:
+        df = df.merge(
+            superscout_match_df,
+            left_on=["team_number", "match_level_normalized", "match_number"],
+            right_on=["team_number", "match_level", "match_number"],
+            how="left",
+            suffixes=("", "_agg"),
+        )
+        df["superscout_overall"] = pd.to_numeric(
+            df["superscout_overall_agg"], errors="coerce"
+        ).fillna(0.0)
+        df["superscout_driver"] = pd.to_numeric(
+            df["superscout_driver_agg"], errors="coerce"
+        ).fillna(0.0)
+        df["superscout_defense"] = pd.to_numeric(
+            df["superscout_defense_agg"], errors="coerce"
+        )
 
     histories: List[TeamMatchHistory] = []
     for team_number in sorted(df["team_number"].unique()):
@@ -1212,6 +1313,18 @@ async def get_team_event_match_history(
                     else 0,
                     total_points=_round_stat(row["total_points"]),
                     notes=str(row["notes"] or ""),
+                    autonomous_fuel_scored=_round_stat(row["autonomous_fuel_scored"]),
+                    total_fuel=_round_stat(row["total_fuel"]),
+                    autonomous_climbed=_round_stat(row["autonomous_climbed"]),
+                    teleop_fuel=_round_stat(row["teleop_fuel"]),
+                    teleop_passing=_round_stat(row["teleop_passing"]),
+                    superscout_overall=_round_stat(row["superscout_overall"]),
+                    superscout_driver=_round_stat(row["superscout_driver"]),
+                    superscout_defense=(
+                        _round_stat(row["superscout_defense"])
+                        if pd.notna(row["superscout_defense"])
+                        else None
+                    ),
                 )
             )
 

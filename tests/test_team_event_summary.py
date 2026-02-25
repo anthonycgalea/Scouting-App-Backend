@@ -750,3 +750,29 @@ def test_get_team_event_z_scores_2026_season_2(summary_client_2026):
     extremes = payload["z_score_extremes"]
     assert "autonomous_fuel_average" in extremes
     assert "superscout_overall_score_average" in extremes
+
+
+def test_get_team_event_match_history_2026_fields(summary_client_2026):
+    response = summary_client_2026.get("/analytics/event/teams/matches")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload) == 2
+
+    first, second = payload
+    assert first["team_number"] == 3333
+    assert second["team_number"] == 4444
+
+    first_match = first["matches"][0]
+    assert first_match["autonomous_fuel_scored"] == pytest.approx(5.0)
+    assert first_match["total_fuel"] == pytest.approx(25.0)
+    assert first_match["autonomous_climbed"] == pytest.approx(1.0)
+    assert first_match["teleop_fuel"] == pytest.approx(20.0)
+    assert first_match["teleop_passing"] == pytest.approx(6.0)
+    assert first_match["endgame_points"] == pytest.approx(10.0)
+    assert first_match["superscout_overall"] == pytest.approx(3.0)
+    assert first_match["superscout_driver"] == pytest.approx(5.0)
+    assert first_match["superscout_defense"] is None
+
+    second_match = second["matches"][0]
+    assert second_match["superscout_defense"] == pytest.approx(4.0)

@@ -9,6 +9,7 @@ class StartingPosition2026(str, Enum):
     HUB = "HUB"
     RIGHTBUMP = "RIGHT_BUMP"
     RIGHTTRENCH = "RIGHT_TRENCH"
+    NOSHOW = "NO_SHOW"
 
 class SuperScoutData2026(SuperScoutData, table=True):
     __tablename__ = "superscout_2026"

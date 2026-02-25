@@ -16,6 +16,7 @@ from app.models import (
     MatchData2026,
     TBAMatchData,
     TBAMatchData2025,
+    TBAMatchData2026,
     Alliance,
     TeamEvent,
     TeamRecord,
@@ -122,6 +123,7 @@ MATCH_DATA_MODELS_BY_YEAR = {
 
 TBA_MATCH_DATA_MODELS_BY_YEAR: Dict[int, type[TBAMatchData]] = {
     2025: TBAMatchData2025,
+    2026: TBAMatchData2026,
 }
 
 TBA_API_ENDPOINT = os.getenv("TBA_API_ENDPOINT", "https://www.thebluealliance.com/api/v3")

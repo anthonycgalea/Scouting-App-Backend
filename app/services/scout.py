@@ -55,6 +55,7 @@ from app.models import (
     ValidationStatus,
 )
 from app.models.tba_match_data_2025 import Endgame2025 as TBAEndgame2025
+from app.models.tba_match_data_2026 import Endgame2026 as TBAEndgame2026
 
 from app.services.event import (
     MATCH_DATA_MODELS_BY_YEAR,
@@ -443,6 +444,60 @@ def _parse_2025_breakdown(
 
 
 TBA_BREAKDOWN_PARSERS_BY_YEAR[2025] = _parse_2025_breakdown
+
+
+def _map_endgame_status_2026(status: Any) -> TBAEndgame2026:
+    if isinstance(status, TBAEndgame2026):
+        return status
+
+    if isinstance(status, str):
+        normalized = status.strip().upper()
+        if normalized in {"", "NONE", "N", "NO", "NOCLIMB"}:
+            return TBAEndgame2026.NONE
+
+        normalized = normalized.replace("LEVEL", "L")
+        if normalized in TBAEndgame2026.__members__:
+            return TBAEndgame2026[normalized]
+
+        try:
+            return TBAEndgame2026(normalized)
+        except ValueError:
+            return TBAEndgame2026.NONE
+
+    return TBAEndgame2026.NONE
+
+
+def _parse_2026_breakdown(
+    breakdown: Optional[Dict[str, Any]], teams: Sequence[int]
+) -> Dict[str, Any]:
+    breakdown = breakdown or {}
+    hub_score = breakdown.get("hubScore") if isinstance(breakdown.get("hubScore"), dict) else {}
+
+    auto_fuel = int((hub_score or {}).get("autoCount") or 0)
+    teleop_fuel = int((hub_score or {}).get("teleopCount") or 0)
+
+    auto_climb_values = []
+    endgame_values = {}
+    for index, _team_number in enumerate(teams, start=1):
+        auto_tower_status = breakdown.get(f"autoTowerRobot{index}")
+        endgame_status = breakdown.get(f"endGameTowerRobot{index}")
+
+        mapped_endgame = _map_endgame_status_2026(endgame_status)
+        endgame_values[f"bot{index}endgame"] = mapped_endgame
+
+        auto_climb_values.append(_map_endgame_status_2026(auto_tower_status) != TBAEndgame2026.NONE)
+
+    return {
+        "autoFuel": auto_fuel,
+        "teleopFuel": teleop_fuel,
+        "bot1AutoClimb": auto_climb_values[0] if len(auto_climb_values) > 0 else False,
+        "bot2AutoClimb": auto_climb_values[1] if len(auto_climb_values) > 1 else False,
+        "bot3AutoClimb": auto_climb_values[2] if len(auto_climb_values) > 2 else False,
+        **endgame_values,
+    }
+
+
+TBA_BREAKDOWN_PARSERS_BY_YEAR[2026] = _parse_2026_breakdown
 
 
 def _parse_tba_breakdown(

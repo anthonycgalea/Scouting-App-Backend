@@ -497,6 +497,38 @@ def _parse_2026_breakdown(
     }
 
 
+def _determine_2026_won_auto(
+    alliance_breakdown: Optional[Dict[str, Any]],
+    other_alliance_breakdown: Optional[Dict[str, Any]] = None,
+) -> bool:
+    def _classify_from_breakdown(breakdown: Optional[Dict[str, Any]]) -> Optional[bool]:
+        if not isinstance(breakdown, dict):
+            return None
+
+        hub_score = breakdown.get("hubScore") if isinstance(breakdown.get("hubScore"), dict) else {}
+        shift2_points = int((hub_score or {}).get("shift2Points") or 0)
+        shift4_points = int((hub_score or {}).get("shift4Points") or 0)
+        if shift2_points > 0 or shift4_points > 0:
+            return True
+
+        shift1_points = int((hub_score or {}).get("shift1Points") or 0)
+        shift3_points = int((hub_score or {}).get("shift3Points") or 0)
+        if shift1_points > 0 or shift3_points > 0:
+            return False
+
+        return None
+
+    own_result = _classify_from_breakdown(alliance_breakdown)
+    if own_result is not None:
+        return own_result
+
+    other_result = _classify_from_breakdown(other_alliance_breakdown)
+    if other_result is not None:
+        return not other_result
+
+    return False
+
+
 TBA_BREAKDOWN_PARSERS_BY_YEAR[2026] = _parse_2026_breakdown
 
 
@@ -1813,13 +1845,21 @@ async def update_tba_match_data_for_pending_alliances(
             for alliance_payload in match_payload["alliances"]:
                 alliance_enum: Alliance = alliance_payload["alliance"]
                 color_key = alliance_enum.value.lower()
+                other_color_key = "red" if color_key == "blue" else "blue"
                 alliance_breakdown = score_breakdown.get(color_key)
+                other_alliance_breakdown = score_breakdown.get(other_color_key)
                 alliance_info = alliances.get(color_key) or {}
                 parsed = _parse_tba_breakdown(
                     event_year,
                     alliance_breakdown,
                     alliance_payload["teams"],
                 )
+
+                if event_year == 2026:
+                    parsed["wonAuto"] = _determine_2026_won_auto(
+                        alliance_breakdown,
+                        other_alliance_breakdown,
+                    )
 
                 rp_value: Optional[int] = None
                 if isinstance(alliance_breakdown, dict):

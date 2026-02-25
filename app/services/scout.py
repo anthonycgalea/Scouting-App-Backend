@@ -1723,21 +1723,7 @@ async def update_tba_match_data_for_pending_alliances(
     pending_result = await session.execute(pending_statement)
     pending_records = pending_result.scalars().all()
 
-    if not pending_records:
-        return {"updated_matches": 0, "updated_alliances": 0, "updated_validations": 0}
-
-    match_identifiers = {
-        (record.match_level, record.match_number)
-        for record in pending_records
-    }
-
-    if not match_identifiers:
-        return {"updated_matches": 0, "updated_alliances": 0, "updated_validations": 0}
-
-    schedule_statement = select(MatchSchedule).where(
-        MatchSchedule.event_key == event_key,
-        tuple_(MatchSchedule.match_level, MatchSchedule.match_number).in_(list(match_identifiers)),
-    )
+    schedule_statement = select(MatchSchedule).where(MatchSchedule.event_key == event_key)
     schedule_result = await session.execute(schedule_statement)
     match_schedules = schedule_result.scalars().all()
 
@@ -1749,6 +1735,29 @@ async def update_tba_match_data_for_pending_alliances(
         key = (record.match_level, record.match_number, record.team_number)
         pending_by_team[key].append(record)
 
+    all_schedule_alliance_keys = {
+        (schedule.match_level, schedule.match_number, alliance)
+        for schedule in match_schedules
+        for alliance in (Alliance.RED, Alliance.BLUE)
+    }
+
+    existing_tba_records: Dict[Tuple[str, int, Alliance], TBAMatchData] = {}
+    if all_schedule_alliance_keys:
+        tba_statement = select(tba_model).where(
+            tba_model.event_key == event_key,
+            tuple_(tba_model.match_level, tba_model.match_number, tba_model.alliance).in_(
+                [
+                    (level, number, alliance)
+                    for level, number, alliance in all_schedule_alliance_keys
+                ]
+            ),
+        )
+        tba_result = await session.execute(tba_statement)
+        existing_tba_records = {
+            (record.match_level, record.match_number, record.alliance): record
+            for record in tba_result.scalars().all()
+        }
+
     alliances_to_process: Dict[str, Dict[str, Any]] = {}
     for schedule in match_schedules:
         alliances = (
@@ -1758,28 +1767,38 @@ async def update_tba_match_data_for_pending_alliances(
 
         for alliance, teams in alliances:
             alliance_validations: List[DataValidation] = []
+            has_complete_pending_alliance = True
             for team in teams:
                 team_records = pending_by_team.get((schedule.match_level, schedule.match_number, team))
                 if not team_records:
+                    has_complete_pending_alliance = False
                     break
                 alliance_validations.extend(team_records)
-            else:
-                match_key = f"{event_key}_{schedule.match_level}{schedule.match_number}"
-                match_payload = alliances_to_process.setdefault(
-                    match_key,
-                    {
-                        "match_number": schedule.match_number,
-                        "match_level": schedule.match_level,
-                        "alliances": [],
-                    },
-                )
-                match_payload["alliances"].append(
-                    {
-                        "alliance": alliance,
-                        "teams": teams,
-                        "validations": alliance_validations,
-                    }
-                )
+
+            existing_record = existing_tba_records.get(
+                (schedule.match_level, schedule.match_number, alliance)
+            )
+            should_fetch_tba = has_complete_pending_alliance or existing_record is None
+
+            if not should_fetch_tba:
+                continue
+
+            match_key = f"{event_key}_{schedule.match_level}{schedule.match_number}"
+            match_payload = alliances_to_process.setdefault(
+                match_key,
+                {
+                    "match_number": schedule.match_number,
+                    "match_level": schedule.match_level,
+                    "alliances": [],
+                },
+            )
+            match_payload["alliances"].append(
+                {
+                    "alliance": alliance,
+                    "teams": teams,
+                    "validations": alliance_validations if has_complete_pending_alliance else [],
+                }
+            )
 
     if not alliances_to_process:
         return {"updated_matches": 0, "updated_alliances": 0, "updated_validations": 0}
@@ -1790,31 +1809,6 @@ async def update_tba_match_data_for_pending_alliances(
         Tuple[str, str, int, int, UUID, int],
         DataValidation,
     ] = {}
-
-    alliance_keys: Set[Tuple[str, int, Alliance]] = set()
-    for match_payload in alliances_to_process.values():
-        for alliance_payload in match_payload["alliances"]:
-            alliance_keys.add(
-                (
-                    match_payload["match_level"],
-                    match_payload["match_number"],
-                    alliance_payload["alliance"],
-                )
-            )
-
-    existing_tba_records: Dict[Tuple[str, int, Alliance], TBAMatchData] = {}
-    if alliance_keys:
-        tba_statement = select(tba_model).where(
-            tba_model.event_key == event_key,
-            tuple_(tba_model.match_level, tba_model.match_number, tba_model.alliance).in_(
-                [(level, number, alliance) for level, number, alliance in alliance_keys]
-            ),
-        )
-        tba_result = await session.execute(tba_statement)
-        existing_tba_records = {
-            (record.match_level, record.match_number, record.alliance): record
-            for record in tba_result.scalars().all()
-        }
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         for match_key, match_payload in alliances_to_process.items():

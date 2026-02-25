@@ -16,7 +16,13 @@ from sqlalchemy.orm import aliased
 from sqlmodel import select
 
 from app.db.database import async_session_factory
-from app.models import DataValidation, UserOrganization, UserRole, ValidationStatus
+from app.models import (
+    DataValidation,
+    OrganizationEvent,
+    UserOrganization,
+    UserRole,
+    ValidationStatus,
+)
 from app.services.event import (
     get_active_event_key_for_user,
     get_event_or_404,
@@ -79,7 +85,7 @@ async def session_scope() -> AsyncIterator[AsyncSession]:
 async def _load_pending_organization_work(
     session: AsyncSession,
 ) -> List[PendingOrganizationWork]:
-    """Return pending validation metadata grouped by organization."""
+    """Return active organization-event metadata grouped by organization."""
 
     membership_priority = case(
         (UserOrganization.role == UserRole.ADMIN, 0),
@@ -99,6 +105,13 @@ async def _load_pending_organization_work(
             DataValidation.organization_id.is_not(None),
         )
         .group_by(DataValidation.organization_id)
+        .subquery()
+    )
+
+    active_orgs_subquery = (
+        select(OrganizationEvent.organization_id.label("org_id"))
+        .where(OrganizationEvent.active.is_(True))
+        .distinct()
         .subquery()
     )
 
@@ -125,13 +138,17 @@ async def _load_pending_organization_work(
 
     statement = (
         select(
-            pending_orgs_subquery.c.org_id,
+            active_orgs_subquery.c.org_id,
             pending_orgs_subquery.c.latest_pending,
             membership_alias,
         )
         .outerjoin(
+            pending_orgs_subquery,
+            pending_orgs_subquery.c.org_id == active_orgs_subquery.c.org_id,
+        )
+        .outerjoin(
             membership_alias,
-            membership_alias.organization_id == pending_orgs_subquery.c.org_id,
+            membership_alias.organization_id == active_orgs_subquery.c.org_id,
         )
         .where(
             or_(
@@ -139,7 +156,7 @@ async def _load_pending_organization_work(
                 membership_alias.priority_rank.is_(None),
             )
         )
-        .order_by(pending_orgs_subquery.c.org_id.asc())
+        .order_by(active_orgs_subquery.c.org_id.asc())
     )
 
     result = await session.execute(statement)
@@ -163,7 +180,7 @@ async def _load_pending_organization_work(
         work_items.append(
             PendingOrganizationWork(
                 organization_id=int(org_id),
-                latest_pending=latest_pending,
+                latest_pending=latest_pending or datetime.min,
                 membership=membership_snapshot,
             )
         )
@@ -248,13 +265,6 @@ async def process_pending_tba_updates() -> bool:
                     event_year=None,
                     alliance_organization_ids=None,
                 )
-                continue
-
-            if (
-                cache_entry
-                and cache_entry.latest_pending_timestamp == latest_pending
-                and cache_entry.membership_signature == membership_signature
-            ):
                 continue
 
             if (
@@ -352,4 +362,3 @@ __all__ = [
     "process_pending_tba_updates",
     "session_scope",
 ]
-

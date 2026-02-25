@@ -15,9 +15,11 @@ from app.models import (
     MatchData,
     Prescout2025,
     RankingPredictions,
+    SuperScoutData2026,
     TeamRecord,
     UserOrganization,
 )
+from app.services.season import get_season_by_year_or_404
 from ..event import (
     MATCH_DATA_MODELS_BY_YEAR,
     get_active_event_key_for_user,
@@ -187,6 +189,24 @@ class TeamEventZScoreSummary(SQLModel):
     total_coral_z: float = 0.0
     total_algae_z: float = 0.0
     total_game_pieces_z: float = 0.0
+    autonomous_fuel_average: float = 0.0
+    teleop_fuel_average: float = 0.0
+    total_fuel_average: float = 0.0
+    autonomous_passing_average: float = 0.0
+    teleop_passing_average: float = 0.0
+    autonomous_climb_average: float = 0.0
+    superscout_overall_score_average: float = 0.0
+    superscout_driver_score_average: float = 0.0
+    superscout_defense_score_average: float = 0.0
+    autonomous_fuel_z: float = 0.0
+    teleop_fuel_z: float = 0.0
+    total_fuel_z: float = 0.0
+    autonomous_passing_z: float = 0.0
+    teleop_passing_z: float = 0.0
+    autonomous_climb_z: float = 0.0
+    superscout_overall_score_z: float = 0.0
+    superscout_driver_score_z: float = 0.0
+    superscout_defense_score_z: float = 0.0
 
 
 class DistributionStatistics(SQLModel):
@@ -500,18 +520,23 @@ def _append_z_scores(
     if not zscore_columns:
         return summary, {}
 
-    numeric = summary[zscore_columns].apply(pd.to_numeric, errors="coerce").fillna(0.0)
-    means = numeric.mean()
-    stds = numeric.std(ddof=0)
-    safe_stds = stds.replace(0, pd.NA)
-
-    z_scores = (numeric - means) / safe_stds
-    z_scores = z_scores.fillna(0.0)
-
     z_column_names: Dict[str, str] = {}
+    numeric = summary[zscore_columns].apply(pd.to_numeric, errors="coerce")
+
     for column in zscore_columns:
+        valid_values = numeric[column].dropna()
+        if valid_values.empty:
+            summary[f"{column.removesuffix('_average')}_z"] = 0.0
+            z_column_names[column] = f"{column.removesuffix('_average')}_z"
+            continue
+
+        mean = valid_values.mean()
+        std = valid_values.std(ddof=0)
         z_column_name = f"{column.removesuffix('_average')}_z"
-        summary[z_column_name] = z_scores[column].round(2)
+        if std == 0 or pd.isna(std):
+            summary[z_column_name] = 0.0
+        else:
+            summary[z_column_name] = ((numeric[column] - mean) / std).fillna(0.0).round(2)
         z_column_names[column] = z_column_name
 
     extremes: Dict[str, Dict[str, float]] = {}
@@ -523,6 +548,76 @@ def _append_z_scores(
         }
 
     return summary, extremes
+
+
+async def _attach_2026_superscout_averages(
+    session: AsyncSession,
+    user_payload: Dict[str, object],
+    summary_df: pd.DataFrame,
+) -> pd.DataFrame:
+    if summary_df.empty:
+        return summary_df
+
+    event_key = await get_active_event_key_for_user(session, user_payload)
+    event = await get_event_or_404(session, event_key)
+    season = await get_season_by_year_or_404(session, event.year)
+    if event.year != 2026 or season.id != 2:
+        return summary_df
+
+    membership = await _get_membership(session, user_payload)
+    alliance_organization_ids = await get_scouting_alliance_organization_ids(
+        session, event_key, membership.organization_id
+    )
+    if not alliance_organization_ids:
+        return summary_df
+
+    statement = select(SuperScoutData2026).where(
+        SuperScoutData2026.event_key == event_key,
+        SuperScoutData2026.organization_id.in_(tuple(alliance_organization_ids)),
+    )
+    result = await session.execute(statement)
+    records = result.scalars().all()
+    if not records:
+        return summary_df
+
+    superscout_rows = []
+    for record in records:
+        defense_rating = getattr(record, "defense_rating", None)
+        played_defense = bool(getattr(record, "played_defense", False))
+        superscout_rows.append(
+            {
+                "team_number": getattr(record, "team_number", None),
+                "superscout_overall_score_average": getattr(record, "robot_overall", None),
+                "superscout_driver_score_average": getattr(record, "driver_rating", None),
+                "superscout_defense_score_average": (
+                    defense_rating if played_defense and defense_rating is not None else None
+                ),
+            }
+        )
+
+    superscout_df = pd.DataFrame(superscout_rows)
+    if superscout_df.empty or "team_number" not in superscout_df.columns:
+        return summary_df
+
+    superscout_summary = (
+        superscout_df.groupby("team_number", as_index=False)
+        .agg(
+            superscout_overall_score_average=("superscout_overall_score_average", "mean"),
+            superscout_driver_score_average=("superscout_driver_score_average", "mean"),
+            superscout_defense_score_average=("superscout_defense_score_average", "mean"),
+        )
+        .sort_values("team_number")
+    )
+
+    merged = summary_df.merge(superscout_summary, on="team_number", how="left")
+    for column in (
+        "superscout_overall_score_average",
+        "superscout_driver_score_average",
+        "superscout_defense_score_average",
+    ):
+        if column in merged.columns:
+            merged[column] = pd.to_numeric(merged[column], errors="coerce").round(2)
+    return merged
 
 
 def _round_stat(value: float) -> float:
@@ -858,6 +953,10 @@ async def get_team_event_z_scores(
     if summary_df.empty:
         return EventTeamZScoreResponse(teams=[], z_score_extremes={})
 
+    event_key = await get_active_event_key_for_user(session, user_payload)
+    event = await get_event_or_404(session, event_key)
+    season = await get_season_by_year_or_404(session, event.year)
+
     stat_columns = [
         "autonomous_points_average",
         "teleop_points_average",
@@ -885,7 +984,49 @@ async def get_team_event_z_scores(
         "teleop_processor_average",
         "teleop_cycles_average",
     ]
+
+    if event.year == 2026 and season.id == 2:
+        summary_df = await _attach_2026_superscout_averages(session, user_payload, summary_df)
+        summary_df["teleop_fuel_average"] = pd.to_numeric(
+            dataframe.groupby("team_number")["teleopFuel"].mean(), errors="coerce"
+        ).reindex(summary_df["team_number"]).fillna(0.0).to_numpy().round(2)
+        summary_df["autonomous_passing_average"] = pd.to_numeric(
+            dataframe.groupby("team_number")["autoPass"].mean(), errors="coerce"
+        ).reindex(summary_df["team_number"]).fillna(0.0).to_numpy().round(2)
+        summary_df["teleop_passing_average"] = pd.to_numeric(
+            dataframe.groupby("team_number")["teleopPass"].mean(), errors="coerce"
+        ).reindex(summary_df["team_number"]).fillna(0.0).to_numpy().round(2)
+        summary_df["autonomous_climb_average"] = pd.to_numeric(
+            dataframe.groupby("team_number")["autoClimb"].mean(), errors="coerce"
+        ).reindex(summary_df["team_number"]).fillna(0.0).to_numpy().round(2)
+        summary_df["autonomous_fuel_average"] = pd.to_numeric(
+            dataframe.groupby("team_number")["autoFuel"].mean(), errors="coerce"
+        ).reindex(summary_df["team_number"]).fillna(0.0).to_numpy().round(2)
+        summary_df["total_fuel_average"] = (
+            summary_df["autonomous_fuel_average"] + summary_df["teleop_fuel_average"]
+        ).round(2)
+        stat_columns = [
+            "autonomous_fuel_average",
+            "endgame_points_average",
+            "total_fuel_average",
+            "autonomous_climb_average",
+            "teleop_fuel_average",
+            "teleop_passing_average",
+            "autonomous_passing_average",
+            "superscout_overall_score_average",
+            "superscout_driver_score_average",
+            "superscout_defense_score_average",
+        ]
     summary_with_z, extremes = _append_z_scores(summary_df, stat_columns)
+    for column in (
+        "superscout_overall_score_average",
+        "superscout_driver_score_average",
+        "superscout_defense_score_average",
+    ):
+        if column in summary_with_z.columns:
+            summary_with_z[column] = pd.to_numeric(
+                summary_with_z[column], errors="coerce"
+            ).fillna(0.0).round(2)
 
     teams = [
         TeamEventZScoreSummary(**record)
@@ -1013,4 +1154,3 @@ async def get_team_event_head_to_head(
         return []
 
     return _summarize_head_to_head_by_team(dataframe, scoring_config)
-

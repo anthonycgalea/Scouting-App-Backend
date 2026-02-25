@@ -9,12 +9,15 @@ from app.auth.dependencies import get_current_user
 from app.main import app
 from app.models import (
     Endgame2025,
+    Endgame2026,
     FRCEvent,
     MatchData2025,
+    MatchData2026,
     Organization,
     OrganizationEvent,
     Prescout2025,
     Season,
+    SuperScoutData2026,
     TeamEvent,
     TeamRecord,
     User,
@@ -529,3 +532,182 @@ def test_get_team_event_head_to_head(summary_client):
 
         for field in ("min", "max", "median", "average", "stdev"):
             assert stat[field] == pytest.approx(expected_value if field != "stdev" else 0.0)
+
+
+async def _prepare_event_summary_data_2026():
+    async with AsyncSessionLocal() as session:
+        season = Season(id=2, year=2026, name="FIRST AGE")
+        event = FRCEvent(
+            event_key="2026summary",
+            event_name="Summary Event 2026",
+            short_name="Summary26",
+            year=2026,
+            week=2,
+        )
+        organization = Organization(name="Summary Org 2026", team_number=9876)
+        user_id = uuid4()
+        user = User(
+            id=user_id,
+            email="summary26@example.com",
+            auth_provider="discord",
+            display_name="Summary User 2026",
+            logged_in_user_org=None,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+
+        teams = [
+            TeamRecord(teamNumber=3333, teamName="Team 3333"),
+            TeamRecord(teamNumber=4444, teamName="Team 4444"),
+        ]
+
+        session.add_all([season, event, organization, user, *teams])
+        await session.commit()
+        await session.refresh(organization)
+
+        membership = UserOrganization(
+            user_id=user_id,
+            organization_id=organization.id,
+            role=UserRole.MEMBER,
+        )
+        session.add(membership)
+        await session.commit()
+        await session.refresh(membership)
+
+        session.add(
+            OrganizationEvent(
+                organization_id=organization.id,
+                event_key=event.event_key,
+                public_data=True,
+                active=True,
+            )
+        )
+        session.add_all(
+            [
+                TeamEvent(event_key=event.event_key, team_number=3333),
+                TeamEvent(event_key=event.event_key, team_number=4444),
+            ]
+        )
+
+        session.add_all(
+            [
+                MatchData2026(
+                    season=season.id,
+                    team_number=3333,
+                    event_key=event.event_key,
+                    match_number=1,
+                    match_level="qm",
+                    user_id=user_id,
+                    organization_id=organization.id,
+                    autoFuel=5,
+                    autoPass=4,
+                    autoClimb=1,
+                    teleopFuel=20,
+                    teleopPass=6,
+                    endgame=Endgame2026.L1,
+                ),
+                MatchData2026(
+                    season=season.id,
+                    team_number=4444,
+                    event_key=event.event_key,
+                    match_number=1,
+                    match_level="qm",
+                    user_id=user_id,
+                    organization_id=organization.id,
+                    autoFuel=8,
+                    autoPass=2,
+                    autoClimb=0,
+                    teleopFuel=12,
+                    teleopPass=3,
+                    endgame=Endgame2026.L2,
+                ),
+            ]
+        )
+
+        session.add_all(
+            [
+                SuperScoutData2026(
+                    season=season.id,
+                    team_number=3333,
+                    event_key=event.event_key,
+                    match_number=1,
+                    match_level="qm",
+                    user_id=user_id,
+                    organization_id=organization.id,
+                    robot_overall=3,
+                    driver_rating=5,
+                    played_defense=False,
+                    defense_rating=None,
+                ),
+                SuperScoutData2026(
+                    season=season.id,
+                    team_number=4444,
+                    event_key=event.event_key,
+                    match_number=1,
+                    match_level="qm",
+                    user_id=user_id,
+                    organization_id=organization.id,
+                    robot_overall=2,
+                    driver_rating=3,
+                    played_defense=True,
+                    defense_rating=4,
+                ),
+            ]
+        )
+        await session.commit()
+
+        return user_id, membership.id
+
+
+@pytest.fixture(scope="module")
+def prepared_event_summary_data_2026(setup_database):
+    return asyncio.run(_prepare_event_summary_data_2026())
+
+
+@pytest.fixture
+def summary_client_2026(prepared_event_summary_data_2026):
+    user_id, membership_id = prepared_event_summary_data_2026
+
+    async def override_current_user():
+        return {
+            "id": str(user_id),
+            "displayName": "Summary User 2026",
+            "email": "summary26@example.com",
+            "user_org": membership_id,
+        }
+
+    app.dependency_overrides[get_current_user] = override_current_user
+
+    with TestClient(app) as client:
+        yield client
+
+    app.dependency_overrides.pop(get_current_user, None)
+
+
+def test_get_team_event_z_scores_2026_season_2(summary_client_2026):
+    response = summary_client_2026.get("/analytics/event/teams/zScores")
+
+    assert response.status_code == 200
+    payload = response.json()
+    teams = payload["teams"]
+    assert len(teams) == 2
+
+    first, second = teams
+    assert first["team_number"] == 3333
+    assert second["team_number"] == 4444
+
+    assert first["autonomous_fuel_average"] == pytest.approx(5.0)
+    assert first["teleop_fuel_average"] == pytest.approx(20.0)
+    assert first["total_fuel_average"] == pytest.approx(25.0)
+    assert first["autonomous_passing_average"] == pytest.approx(4.0)
+    assert first["teleop_passing_average"] == pytest.approx(6.0)
+    assert first["autonomous_climb_average"] == pytest.approx(1.0)
+    assert first["superscout_overall_score_average"] == pytest.approx(3.0)
+    assert first["superscout_driver_score_average"] == pytest.approx(5.0)
+    assert first["superscout_defense_score_average"] == pytest.approx(0.0)
+
+    assert second["superscout_defense_score_average"] == pytest.approx(4.0)
+
+    extremes = payload["z_score_extremes"]
+    assert "autonomous_fuel_average" in extremes
+    assert "superscout_overall_score_average" in extremes

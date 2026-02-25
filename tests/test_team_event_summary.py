@@ -420,6 +420,20 @@ def test_get_team_event_z_scores(summary_client):
     assert first["autonomous_level_1_coral_z"] == pytest.approx(0.0)
     assert second["autonomous_level_1_coral_z"] == pytest.approx(0.0)
 
+    game_specific_2026_fields = {
+        "autonomous_fuel_average",
+        "teleop_fuel_average",
+        "total_fuel_average",
+        "autonomous_passing_average",
+        "teleop_passing_average",
+        "autonomous_climb_average",
+        "superscout_overall_score_average",
+        "superscout_driver_score_average",
+        "superscout_defense_score_average",
+    }
+    assert game_specific_2026_fields.isdisjoint(first.keys())
+    assert game_specific_2026_fields.isdisjoint(second.keys())
+
     extremes = payload["z_score_extremes"]
     assert extremes["autonomous_level_4_coral_average"]["min"] == pytest.approx(-1.0)
     assert extremes["autonomous_level_4_coral_average"]["max"] == pytest.approx(1.0)
@@ -707,6 +721,31 @@ def test_get_team_event_z_scores_2026_season_2(summary_client_2026):
     assert first["superscout_defense_score_average"] == pytest.approx(0.0)
 
     assert second["superscout_defense_score_average"] == pytest.approx(4.0)
+
+    game_specific_2025_fields = {
+        "autonomous_level_4_coral_average",
+        "autonomous_level_3_coral_average",
+        "autonomous_level_2_coral_average",
+        "autonomous_level_1_coral_average",
+        "teleop_level_4_coral_average",
+        "teleop_level_3_coral_average",
+        "teleop_level_2_coral_average",
+        "teleop_level_1_coral_average",
+        "autonomous_net_average",
+        "teleop_net_average",
+        "autonomous_processor_average",
+        "teleop_processor_average",
+        "teleop_cycles_average",
+        "autonomous_coral_average",
+        "autonomous_algae_average",
+        "teleop_coral_average",
+        "teleop_algae_average",
+        "total_coral_average",
+        "total_algae_average",
+        "total_game_pieces_average",
+    }
+    assert game_specific_2025_fields.isdisjoint(first.keys())
+    assert game_specific_2025_fields.isdisjoint(second.keys())
 
     extremes = payload["z_score_extremes"]
     assert "autonomous_fuel_average" in extremes

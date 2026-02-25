@@ -91,6 +91,7 @@ async def get_event_team_match_history(
 @router.get(
     "/event/teams/zScores",
     response_model=EventTeamZScoreResponse,
+    response_model_exclude_none=True,
 )
 async def get_event_team_z_scores(
     user=Depends(get_current_user),

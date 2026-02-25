@@ -776,3 +776,84 @@ def test_get_team_event_match_history_2026_fields(summary_client_2026):
 
     second_match = second["matches"][0]
     assert second_match["superscout_defense"] == pytest.approx(4.0)
+
+
+def test_get_team_event_head_to_head_2026_fields(summary_client_2026):
+    response = summary_client_2026.get("/analytics/event/teams/headToHead")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload) == 2
+
+    first, second = payload
+    assert first["team_number"] == 3333
+    assert second["team_number"] == 4444
+
+    _assert_head_to_head_statistic(
+        first["autonomous_fuel_scored"],
+        {"min": 5.0, "max": 5.0, "median": 5.0, "average": 5.0, "stdev": 0.0},
+    )
+    _assert_head_to_head_statistic(
+        first["autonomous_fuel_passed"],
+        {"min": 4.0, "max": 4.0, "median": 4.0, "average": 4.0, "stdev": 0.0},
+    )
+    _assert_head_to_head_statistic(
+        first["autonomous_auto_climb"],
+        {"min": 1.0, "max": 1.0, "median": 1.0, "average": 1.0, "stdev": 0.0},
+    )
+    _assert_head_to_head_statistic(
+        first["autonomous_points"],
+        {"min": 20.0, "max": 20.0, "median": 20.0, "average": 20.0, "stdev": 0.0},
+    )
+
+    _assert_head_to_head_statistic(
+        first["teleop_fuel_scored"],
+        {"min": 20.0, "max": 20.0, "median": 20.0, "average": 20.0, "stdev": 0.0},
+    )
+    _assert_head_to_head_statistic(
+        first["teleop_fuel_passed"],
+        {"min": 6.0, "max": 6.0, "median": 6.0, "average": 6.0, "stdev": 0.0},
+    )
+
+    _assert_head_to_head_statistic(
+        first["endgame_climb"],
+        {"min": 10.0, "max": 10.0, "median": 10.0, "average": 10.0, "stdev": 0.0},
+    )
+    assert first["endgame_success_rate"] == pytest.approx(100.0)
+
+    _assert_head_to_head_statistic(
+        first["total_points"],
+        {"min": 50.0, "max": 50.0, "median": 50.0, "average": 50.0, "stdev": 0.0},
+    )
+
+    _assert_head_to_head_statistic(
+        second["autonomous_points"],
+        {"min": 8.0, "max": 8.0, "median": 8.0, "average": 8.0, "stdev": 0.0},
+    )
+    _assert_head_to_head_statistic(
+        second["teleop_fuel_scored"],
+        {"min": 12.0, "max": 12.0, "median": 12.0, "average": 12.0, "stdev": 0.0},
+    )
+    _assert_head_to_head_statistic(
+        second["endgame_climb"],
+        {"min": 20.0, "max": 20.0, "median": 20.0, "average": 20.0, "stdev": 0.0},
+    )
+    assert second["endgame_success_rate"] == pytest.approx(100.0)
+    _assert_head_to_head_statistic(
+        second["total_points"],
+        {"min": 40.0, "max": 40.0, "median": 40.0, "average": 40.0, "stdev": 0.0},
+    )
+
+    game_specific_2025_fields = {
+        "autonomous_coral",
+        "autonomous_net_algae",
+        "autonomous_processor_algae",
+        "teleop_coral",
+        "teleop_game_pieces",
+        "teleop_net_algae",
+        "teleop_processor_algae",
+        "total_net_algae",
+    }
+    assert game_specific_2025_fields.isdisjoint(first.keys())
+    assert game_specific_2025_fields.isdisjoint(second.keys())
+

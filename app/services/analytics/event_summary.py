@@ -350,18 +350,24 @@ class HeadToHeadStatistic(SQLModel):
 class TeamHeadToHeadStatistics(SQLModel):
     team_number: int
     matches_played: int
-    autonomous_coral: HeadToHeadStatistic
-    autonomous_net_algae: HeadToHeadStatistic
-    autonomous_processor_algae: HeadToHeadStatistic
+    autonomous_coral: Optional[HeadToHeadStatistic] = None
+    autonomous_net_algae: Optional[HeadToHeadStatistic] = None
+    autonomous_processor_algae: Optional[HeadToHeadStatistic] = None
     autonomous_points: HeadToHeadStatistic
-    teleop_coral: HeadToHeadStatistic
-    teleop_game_pieces: HeadToHeadStatistic
+    teleop_coral: Optional[HeadToHeadStatistic] = None
+    teleop_game_pieces: Optional[HeadToHeadStatistic] = None
     teleop_points: HeadToHeadStatistic
-    teleop_net_algae: HeadToHeadStatistic
-    teleop_processor_algae: HeadToHeadStatistic
+    teleop_net_algae: Optional[HeadToHeadStatistic] = None
+    teleop_processor_algae: Optional[HeadToHeadStatistic] = None
     endgame_points: HeadToHeadStatistic
     total_points: HeadToHeadStatistic
-    total_net_algae: HeadToHeadStatistic
+    total_net_algae: Optional[HeadToHeadStatistic] = None
+    autonomous_fuel_scored: Optional[HeadToHeadStatistic] = None
+    autonomous_fuel_passed: Optional[HeadToHeadStatistic] = None
+    autonomous_auto_climb: Optional[HeadToHeadStatistic] = None
+    teleop_fuel_scored: Optional[HeadToHeadStatistic] = None
+    teleop_fuel_passed: Optional[HeadToHeadStatistic] = None
+    endgame_climb: Optional[HeadToHeadStatistic] = None
     endgame_success_rate: float = 0.0
 
 
@@ -844,7 +850,9 @@ def _calculate_head_to_head_metric(series: pd.Series) -> HeadToHeadStatistic:
     )
 
 
-def _calculate_endgame_success_rate(series: pd.Series) -> float:
+def _calculate_endgame_success_rate(
+    series: pd.Series, success_endgame_states: Sequence[str]
+) -> float:
     if series.empty:
         return 0.0
 
@@ -853,7 +861,7 @@ def _calculate_endgame_success_rate(series: pd.Series) -> float:
     if total == 0:
         return 0.0
 
-    successes = normalized.isin({"SHALLOW", "DEEP"}).sum()
+    successes = normalized.isin(set(success_endgame_states)).sum()
     return _round_stat((successes / total) * 100.0)
 
 
@@ -903,6 +911,13 @@ def _summarize_head_to_head_by_team(
         working["autonomous_net_algae"] + working["teleop_net_algae"]
     )
 
+    working["autonomous_fuel_scored"] = _ensure_numeric_column(working, "autoFuel")
+    working["autonomous_fuel_passed"] = _ensure_numeric_column(working, "autoPass")
+    working["autonomous_auto_climb"] = _ensure_numeric_column(working, "autoClimb")
+    working["teleop_fuel_scored"] = _ensure_numeric_column(working, "teleopFuel")
+    working["teleop_fuel_passed"] = _ensure_numeric_column(working, "teleopPass")
+    working["endgame_climb"] = working["endgame_points"]
+
     working["team_number"] = pd.to_numeric(
         working["team_number"], errors="coerce"
     ).fillna(0)
@@ -926,7 +941,27 @@ def _summarize_head_to_head_by_team(
         ("endgame_points", "endgame_points"),
         ("total_points", "total_points"),
         ("total_net_algae", "total_net_algae"),
+        ("autonomous_fuel_scored", "autonomous_fuel_scored"),
+        ("autonomous_fuel_passed", "autonomous_fuel_passed"),
+        ("autonomous_auto_climb", "autonomous_auto_climb"),
+        ("teleop_fuel_scored", "teleop_fuel_scored"),
+        ("teleop_fuel_passed", "teleop_fuel_passed"),
+        ("endgame_climb", "endgame_climb"),
     ]
+
+    is_2026 = (
+        "autoFuel" in config.auto_weights
+        and "teleopFuel" in config.teleop_weights
+        and "autoClimb" in config.auto_weights
+    )
+    if {"SHALLOW", "DEEP"}.issubset(set(config.endgame_points.keys())):
+        success_endgame_states = ["SHALLOW", "DEEP"]
+    else:
+        success_endgame_states = [
+            state
+            for state, points in config.endgame_points.items()
+            if state != "NONE" and points > 0
+        ]
 
     for team_number, group in grouped:
         metrics = {
@@ -939,11 +974,28 @@ def _summarize_head_to_head_by_team(
                 team_number=int(team_number) if pd.notna(team_number) else 0,
                 matches_played=int(group["match_number"].count()),
                 endgame_success_rate=_calculate_endgame_success_rate(
-                    group["endgame"]
+                    group["endgame"], success_endgame_states
                 ),
                 **metrics,
             )
         )
+
+        if is_2026:
+            summaries[-1].autonomous_coral = None
+            summaries[-1].autonomous_net_algae = None
+            summaries[-1].autonomous_processor_algae = None
+            summaries[-1].teleop_coral = None
+            summaries[-1].teleop_game_pieces = None
+            summaries[-1].teleop_net_algae = None
+            summaries[-1].teleop_processor_algae = None
+            summaries[-1].total_net_algae = None
+        else:
+            summaries[-1].autonomous_fuel_scored = None
+            summaries[-1].autonomous_fuel_passed = None
+            summaries[-1].autonomous_auto_climb = None
+            summaries[-1].teleop_fuel_scored = None
+            summaries[-1].teleop_fuel_passed = None
+            summaries[-1].endgame_climb = None
 
     summaries.sort(key=lambda entry: entry.team_number)
     return summaries

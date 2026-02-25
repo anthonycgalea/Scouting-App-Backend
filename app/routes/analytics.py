@@ -103,6 +103,7 @@ async def get_event_team_z_scores(
 @router.get(
     "/event/teams/headToHead",
     response_model=List[TeamHeadToHeadStatistics],
+    response_model_exclude_none=True,
 )
 async def get_event_team_head_to_head_statistics(
     user=Depends(get_current_user),

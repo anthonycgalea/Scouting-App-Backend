@@ -259,12 +259,17 @@ async def get_match_or_404(session: AsyncSession, eventCode: str, matchNumber: i
         raise HTTPException(status_code=404, detail="Match not found")
     return match
 
-async def get_match_schedule_or_404(session: AsyncSession, eventCode: str) -> List[MatchScheduleResponse]:
-    statement = select(MatchSchedule).where(
-        MatchSchedule.event_key == eventCode
-    )
+
+async def get_match_schedule(
+    session: AsyncSession, eventCode: str
+) -> List[MatchScheduleResponse]:
+    statement = select(MatchSchedule).where(MatchSchedule.event_key == eventCode)
     result = await session.execute(statement)
-    matches = result.scalars().all()  # <-- returns list of MatchSchedule
+    return result.scalars().all()
+
+
+async def get_match_schedule_or_404(session: AsyncSession, eventCode: str) -> List[MatchScheduleResponse]:
+    matches = await get_match_schedule(session, eventCode)
     if not matches:
         raise HTTPException(status_code=404, detail="No matches found for this event")
     return matches

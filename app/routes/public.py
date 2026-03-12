@@ -12,7 +12,7 @@ from app.services.event import (
     TeamEventResponse,
     get_event_list_or_404,
     get_event_teams_or_404,
-    get_match_schedule_or_404,
+    get_match_schedule,
 )
 from app.services.season import get_seasons
 from app.services.team import get_team_records_page
@@ -49,7 +49,7 @@ async def get_public_events(
 async def get_public_match_schedule(
     eventCode: str, session: AsyncSession = Depends(get_session)
 ) -> List[MatchScheduleResponse]:
-    return await get_match_schedule_or_404(session, eventCode)
+    return await get_match_schedule(session, eventCode)
 
 
 @router.get("/teams", response_model=PaginatedTeamRecordsResponse)

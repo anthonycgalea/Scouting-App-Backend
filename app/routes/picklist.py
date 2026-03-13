@@ -152,7 +152,13 @@ async def list_picklists(
     session: AsyncSession = Depends(get_session),
     user: Dict[str, Any] = Depends(get_current_user),
 ) -> List[PickListResponse]:
-    membership = await require_lead_or_admin_membership(session, user)
+    try:
+        membership = await require_lead_or_admin_membership(session, user)
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            return []
+        raise
+
     event_key = await get_active_event_key_for_user(session, user)
 
     picklists = await fetch_picklists_for_event(

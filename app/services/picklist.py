@@ -24,31 +24,59 @@ PICKLIST_GENERATOR_MODELS_BY_YEAR: Dict[int, Type[PickListGenerator]] = {
 }
 
 
-GENERATOR_FIELD_TO_Z_SCORE: Dict[str, str] = {
-    "al4c": "autonomous_level_4_coral_z",
-    "al3c": "autonomous_level_3_coral_z",
-    "al2c": "autonomous_level_2_coral_z",
-    "al1c": "autonomous_level_1_coral_z",
-    "autonomous_coral": "autonomous_coral_z",
-    "autonomous_algae": "autonomous_algae_z",
-    "autonomous_points": "autonomous_points_z",
-    "tl4c": "teleop_level_4_coral_z",
-    "tl3c": "teleop_level_3_coral_z",
-    "tl2c": "teleop_level_2_coral_z",
-    "tl1c": "teleop_level_1_coral_z",
-    "teleop_coral": "teleop_coral_z",
-    "teleop_algae": "teleop_algae_z",
-    "teleop_points": "teleop_points_z",
-    "aNet": "autonomous_net_z",
-    "tNet": "teleop_net_z",
-    "aProcessor": "autonomous_processor_z",
-    "tProcessor": "teleop_processor_z",
-    "endgame_points": "endgame_points_z",
-    "total_coral": "total_coral_z",
-    "total_algae": "total_algae_z",
-    "total_game_pieces": "total_game_pieces_z",
-    "total_points": "total_points_z",
+GENERATOR_FIELD_TO_Z_SCORE_BY_YEAR: Dict[int, Dict[str, str]] = {
+    2025: {
+        "al4c": "autonomous_level_4_coral_z",
+        "al3c": "autonomous_level_3_coral_z",
+        "al2c": "autonomous_level_2_coral_z",
+        "al1c": "autonomous_level_1_coral_z",
+        "autonomous_coral": "autonomous_coral_z",
+        "autonomous_algae": "autonomous_algae_z",
+        "autonomous_points": "autonomous_points_z",
+        "tl4c": "teleop_level_4_coral_z",
+        "tl3c": "teleop_level_3_coral_z",
+        "tl2c": "teleop_level_2_coral_z",
+        "tl1c": "teleop_level_1_coral_z",
+        "teleop_coral": "teleop_coral_z",
+        "teleop_algae": "teleop_algae_z",
+        "teleop_points": "teleop_points_z",
+        "aNet": "autonomous_net_z",
+        "tNet": "teleop_net_z",
+        "aProcessor": "autonomous_processor_z",
+        "tProcessor": "teleop_processor_z",
+        "endgame_points": "endgame_points_z",
+        "total_coral": "total_coral_z",
+        "total_algae": "total_algae_z",
+        "total_game_pieces": "total_game_pieces_z",
+        "total_points": "total_points_z",
+    },
+    2026: {
+        "autonomous_fuel": "autonomous_fuel_z",
+        "autonomous_pass": "autonomous_passing_z",
+        "autonomous_climb": "autonomous_climb_z",
+        "autonomous_points": "autonomous_points_z",
+        "teleop_fuel": "teleop_fuel_z",
+        "teleop_pass": "teleop_passing_z",
+        "endgame_points": "endgame_points_z",
+        "total_fuel": "total_fuel_z",
+        "total_climb": "autonomous_climb_z",
+        "total_points": "total_points_z",
+    },
 }
+
+
+def get_generator_field_to_z_score_mapping(generator: PickListGenerator) -> Dict[str, str]:
+    generator_fields = set(getattr(generator.__class__, "model_fields", {}).keys())
+
+    best_mapping: Dict[str, str] = {}
+    best_overlap = -1
+    for mapping in GENERATOR_FIELD_TO_Z_SCORE_BY_YEAR.values():
+        overlap = len(generator_fields.intersection(mapping.keys()))
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_mapping = mapping
+
+    return best_mapping
 
 
 def get_picklist_generator_model_for_year(year: int) -> Type[PickListGenerator]:
@@ -136,6 +164,7 @@ async def generate_picklist_ranks_from_generator(
 ) -> List[int]:
     z_scores = await get_team_event_z_scores(session, user)
     teams = z_scores.teams
+    field_to_z_score = get_generator_field_to_z_score_mapping(generator)
 
     if not teams:
         return []
@@ -143,7 +172,7 @@ async def generate_picklist_ranks_from_generator(
     weighted_scores: List[tuple[int, float]] = []
     for team in teams:
         total_score = 0.0
-        for field, z_column in GENERATOR_FIELD_TO_Z_SCORE.items():
+        for field, z_column in field_to_z_score.items():
             weight = getattr(generator, field, 0.0)
             if not weight:
                 continue

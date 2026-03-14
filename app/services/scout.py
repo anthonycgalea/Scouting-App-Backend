@@ -2464,31 +2464,36 @@ async def _enqueue_unplayed_matches_for_prediction_queue(
     if not unplayed_matches:
         return
 
-    queue_statement = (
-        select(PredictionQueue.match_number, PredictionQueue.match_level)
-        .where(
-            PredictionQueue.event_key == event_key,
-            PredictionQueue.organization_id == organization_id,
+    queue_entries: List[PredictionQueue] = []
+    for accessible_org_id in accessible_org_ids:
+        queue_statement = (
+            select(PredictionQueue.match_number, PredictionQueue.match_level)
+            .where(
+                PredictionQueue.event_key == event_key,
+                PredictionQueue.organization_id == int(accessible_org_id),
+            )
         )
-    )
-    queue_result = await session.execute(queue_statement)
-    queued_matches = {
-        (row.match_number, row.match_level) for row in queue_result
-    }
+        queue_result = await session.execute(queue_statement)
+        queued_matches = {
+            (row.match_number, row.match_level) for row in queue_result
+        }
 
-    matches_to_queue = unplayed_matches - queued_matches
-    if not matches_to_queue:
+        matches_to_queue = unplayed_matches - queued_matches
+        if not matches_to_queue:
+            continue
+
+        queue_entries.extend(
+            PredictionQueue(
+                event_key=event_key,
+                match_number=match_number,
+                match_level=match_level,
+                organization_id=int(accessible_org_id),
+            )
+            for match_number, match_level in matches_to_queue
+        )
+
+    if not queue_entries:
         return
-
-    queue_entries = [
-        PredictionQueue(
-            event_key=event_key,
-            match_number=match_number,
-            match_level=match_level,
-            organization_id=organization_id,
-        )
-        for match_number, match_level in matches_to_queue
-    ]
 
     session.add_all(queue_entries)
     try:

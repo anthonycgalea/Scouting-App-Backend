@@ -9,6 +9,7 @@ from app.models import (
     Endgame2025,
     FRCEvent,
     MatchData2025,
+    MatchData2026,
     MatchPredictions2025,
     MatchSchedule,
     Organization,
@@ -41,6 +42,7 @@ from tests.conftest import AsyncSessionLocal
 async def _create_alliance_context(
     event_key: str,
     season_id: int,
+    event_year: int = 2025,
     *,
     alliance_from_primary: bool = True,
     invite_status: OrgEventAllianceInviteStatus = OrgEventAllianceInviteStatus.ACCEPTED,
@@ -48,12 +50,12 @@ async def _create_alliance_context(
     async with AsyncSessionLocal() as session:
         now = datetime.utcnow()
 
-        season = Season(id=season_id, year=2025, name=f"Season {season_id}")
+        season = Season(id=season_id, year=event_year, name=f"Season {season_id}")
         event = FRCEvent(
             event_key=event_key,
             event_name="Alliance Test Event",
             short_name="Alliance",
-            year=2025,
+            year=event_year,
             week=1,
         )
         primary_org = Organization(name=f"Primary {event_key}", team_number=season_id)
@@ -552,3 +554,37 @@ async def test_removed_alliance_not_accessible(setup_database):
         )
 
     assert accessible == {context["primary_organization_id"]}
+
+
+@pytest.mark.asyncio
+async def test_match_data_includes_alliance_records_for_2026(setup_database):
+    context = await _create_alliance_context("2026alliancemd", 9301, event_year=2026)
+
+    async with AsyncSessionLocal() as session:
+        team = TeamRecord(teamNumber=2234, teamName="Alliance Team 2026")
+        session.add(team)
+        await session.commit()
+
+        match_entry = MatchData2026(
+            season=context["season_id"],
+            team_number=team.team_number,
+            event_key=context["event_key"],
+            match_number=1,
+            match_level="qm",
+            user_id=context["allied_user_id"],
+            organization_id=context["allied_organization_id"],
+        )
+        session.add(match_entry)
+        await session.commit()
+
+        user_payload = {
+            "id": str(context["primary_user_id"]),
+            "user_org": context["primary_membership_id"],
+        }
+
+        records = await get_match_data_for_team_at_active_event(
+            session, team.team_number, user_payload
+        )
+
+        assert len(records) == 1
+        assert records[0].organization_id == context["allied_organization_id"]

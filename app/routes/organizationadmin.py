@@ -759,7 +759,7 @@ async def _enqueue_matches_for_prediction_queue(
     organization_id: int,
     matches: Iterable[Tuple[int, str]],
 ) -> None:
-    """Add new matches to the prediction queue for the organization.
+    """Add new matches to the prediction queue for the scouting alliance.
 
     Existing queue entries for the provided matches are left untouched to
     avoid duplicate jobs when the schedule is synchronized multiple times.
@@ -774,33 +774,45 @@ async def _enqueue_matches_for_prediction_queue(
     if not unique_matches:
         return
 
-    queue_statement = select(
-        PredictionQueue.match_number,
-        PredictionQueue.match_level,
-    ).where(
-        PredictionQueue.event_key == event_key,
-        PredictionQueue.organization_id == organization_id,
+    alliance_organization_ids = await get_scouting_alliance_organization_ids(
+        session,
+        event_key,
+        int(organization_id),
     )
-    queue_result = await session.execute(queue_statement)
-    existing_matches: Set[Tuple[int, str]] = {
-        (int(match_number), match_level)
-        for match_number, match_level in queue_result
-    }
+    if not alliance_organization_ids:
+        alliance_organization_ids = {int(organization_id)}
 
-    matches_to_queue = unique_matches - existing_matches
-    if not matches_to_queue:
-        return
-
-    queue_entries = [
-        PredictionQueue(
-            event_key=event_key,
-            match_number=match_number,
-            match_level=match_level,
-            organization_id=organization_id,
+    queue_entries: list[PredictionQueue] = []
+    for alliance_org_id in alliance_organization_ids:
+        queue_statement = select(
+            PredictionQueue.match_number,
+            PredictionQueue.match_level,
+        ).where(
+            PredictionQueue.event_key == event_key,
+            PredictionQueue.organization_id == int(alliance_org_id),
         )
-        for match_number, match_level in matches_to_queue
-    ]
-    session.add_all(queue_entries)
+        queue_result = await session.execute(queue_statement)
+        existing_matches: Set[Tuple[int, str]] = {
+            (int(match_number), match_level)
+            for match_number, match_level in queue_result
+        }
+
+        matches_to_queue = unique_matches - existing_matches
+        if not matches_to_queue:
+            continue
+
+        queue_entries.extend(
+            PredictionQueue(
+                event_key=event_key,
+                match_number=match_number,
+                match_level=match_level,
+                organization_id=int(alliance_org_id),
+            )
+            for match_number, match_level in matches_to_queue
+        )
+
+    if queue_entries:
+        session.add_all(queue_entries)
 
 
 async def _queue_matches_missing_predictions(

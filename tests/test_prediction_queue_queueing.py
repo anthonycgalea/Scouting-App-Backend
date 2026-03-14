@@ -104,6 +104,78 @@ def test_enqueue_matches_for_prediction_queue_adds_new_matches(setup_database):
     asyncio.run(_run_test())
 
 
+def test_enqueue_matches_for_prediction_queue_adds_matches_for_alliance(setup_database):
+    async def _run_test() -> None:
+        async with AsyncSessionLocal() as session:
+            event = FRCEvent(
+                event_key="2025queuealliance",
+                event_name="Queue Alliance Event",
+                year=2025,
+                week=1,
+            )
+            org_a = Organization(name="Queue Alliance A", team_number=1717)
+            org_b = Organization(name="Queue Alliance B", team_number=2727)
+            session.add_all([event, org_a, org_b])
+            await session.commit()
+            await session.refresh(org_a)
+            await session.refresh(org_b)
+
+            org_a_event = OrganizationEvent(
+                organization_id=org_a.id,
+                event_key=event.event_key,
+                active=True,
+            )
+            org_b_event = OrganizationEvent(
+                organization_id=org_b.id,
+                event_key=event.event_key,
+                active=True,
+            )
+            session.add_all([org_a_event, org_b_event])
+            await session.commit()
+            await session.refresh(org_a_event)
+
+            session.add(
+                OrganizationEventAlliance(
+                    orgevent_Uid=org_a_event.id,
+                    other_organization_id=org_b.id,
+                    org_invite_status=OrgEventAllianceInviteStatus.ACCEPTED,
+                )
+            )
+            await session.commit()
+
+            await _enqueue_matches_for_prediction_queue(
+                session,
+                event_key=event.event_key,
+                organization_id=org_a.id,
+                matches=[(7, "qm")],
+            )
+            await session.commit()
+
+            org_a_result = await session.execute(
+                select(PredictionQueue).where(
+                    PredictionQueue.event_key == event.event_key,
+                    PredictionQueue.organization_id == org_a.id,
+                )
+            )
+            org_b_result = await session.execute(
+                select(PredictionQueue).where(
+                    PredictionQueue.event_key == event.event_key,
+                    PredictionQueue.organization_id == org_b.id,
+                )
+            )
+
+            assert {
+                (row.match_number, row.match_level)
+                for row in org_a_result.scalars().all()
+            } == {(7, "qm")}
+            assert {
+                (row.match_number, row.match_level)
+                for row in org_b_result.scalars().all()
+            } == {(7, "qm")}
+
+    asyncio.run(_run_test())
+
+
 def test_match_sync_enqueues_missing_predictions(setup_database):
     async def _run_test() -> None:
         async with AsyncSessionLocal() as session:
@@ -189,6 +261,9 @@ def test_match_sync_enqueues_missing_predictions(setup_database):
             class _MockResponse:
                 def json(self):
                     return schedule_payload
+
+                def raise_for_status(self):
+                    return None
 
             class _MockAsyncClient:
                 def __init__(self, *args, **kwargs):
@@ -506,7 +581,11 @@ def test_editing_allied_match_queues_for_active_org(setup_database):
                     PredictionQueue.organization_id == org_a.id,
                 )
             )
-            assert not other_result.scalars().all()
+            other_queued_matches = {
+                (row.match_number, row.match_level)
+                for row in other_result.scalars().all()
+            }
+            assert other_queued_matches == {(2, "qm")}
 
     asyncio.run(_run_test())
 
@@ -608,6 +687,9 @@ def test_match_schedule_sync_queues_modified_matches(monkeypatch, setup_database
 
                 def json(self):
                     return self._payload
+
+                def raise_for_status(self):
+                    return None
 
             class MockAsyncClient:
                 def __init__(self, payload):

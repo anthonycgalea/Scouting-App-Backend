@@ -16,6 +16,7 @@ from app.models import (
     Organization,
     OrganizationEvent,
     Prescout2025,
+    Prescout2026,
     Season,
     SuperScoutData2026,
     TeamEvent,
@@ -637,6 +638,40 @@ async def _prepare_event_summary_data_2026():
                 ),
             ]
         )
+        session.add_all(
+            [
+                Prescout2026(
+                    season=season.id,
+                    team_number=3333,
+                    event_key=event.event_key,
+                    match_number=1,
+                    match_level="qm",
+                    user_id=user_id,
+                    organization_id=organization.id,
+                    autoFuel=6,
+                    autoPass=3,
+                    autoClimb=1,
+                    teleopFuel=19,
+                    teleopPass=7,
+                    endgame=Endgame2026.L1,
+                ),
+                Prescout2026(
+                    season=season.id,
+                    team_number=4444,
+                    event_key=event.event_key,
+                    match_number=1,
+                    match_level="qm",
+                    user_id=user_id,
+                    organization_id=organization.id,
+                    autoFuel=7,
+                    autoPass=1,
+                    autoClimb=0,
+                    teleopFuel=13,
+                    teleopPass=2,
+                    endgame=Endgame2026.L2,
+                ),
+            ]
+        )
 
         session.add_all(
             [
@@ -752,6 +787,33 @@ def test_get_team_event_z_scores_2026_season_2(summary_client_2026):
     assert "superscout_overall_score_average" in extremes
 
 
+def test_get_team_prescout_summary_2026(summary_client_2026):
+    response = summary_client_2026.get("/analytics/prescout/teams")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload, list)
+    assert len(payload) == 2
+
+    first, second = payload
+    assert first["team_number"] == 3333
+    assert second["team_number"] == 4444
+
+    assert first["matches_played"] == 1
+    assert first["autonomous_points_average"] == pytest.approx(21.0)
+    assert first["teleop_points_average"] == pytest.approx(19.0)
+    assert first["endgame_points_average"] == pytest.approx(10.0)
+    assert first["game_piece_average"] == pytest.approx(25.0)
+    assert first["total_points_average"] == pytest.approx(50.0)
+
+    assert second["matches_played"] == 1
+    assert second["autonomous_points_average"] == pytest.approx(7.0)
+    assert second["teleop_points_average"] == pytest.approx(13.0)
+    assert second["endgame_points_average"] == pytest.approx(20.0)
+    assert second["game_piece_average"] == pytest.approx(20.0)
+    assert second["total_points_average"] == pytest.approx(40.0)
+
+
 def test_get_team_event_match_history_2026_fields(summary_client_2026):
     response = summary_client_2026.get("/analytics/event/teams/matches")
 
@@ -856,4 +918,3 @@ def test_get_team_event_head_to_head_2026_fields(summary_client_2026):
     }
     assert game_specific_2025_fields.isdisjoint(first.keys())
     assert game_specific_2025_fields.isdisjoint(second.keys())
-

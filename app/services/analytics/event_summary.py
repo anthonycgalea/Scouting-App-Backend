@@ -14,6 +14,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.models import (
     MatchData,
     Prescout2025,
+    Prescout2026,
     RankingPredictions,
     SuperScoutData2026,
     TeamRecord,
@@ -30,6 +31,7 @@ from ..event import (
 
 PRESCOUT_MODELS_BY_YEAR: Mapping[int, type[MatchData]] = {
     2025: Prescout2025,
+    2026: Prescout2026,
 }
 
 

@@ -1,5 +1,6 @@
 import asyncio
 import os
+from typing import Any
 
 from fastapi.testclient import TestClient
 
@@ -7,6 +8,7 @@ os.environ.setdefault("SUPABASE_JWT_SECRET", "test-secret")
 
 from app.main import app
 from app.models import FRCEvent
+from app.services import event as event_service
 from tests.conftest import AsyncSessionLocal
 
 
@@ -57,10 +59,10 @@ def test_list_events_uses_event_name_when_short_name_missing(setup_database):
 
 
 
-async def _prepare_event_without_schedule() -> FRCEvent:
+async def _prepare_event_without_schedule(event_key: str = "2024noschedule") -> FRCEvent:
     async with AsyncSessionLocal() as session:
         event = FRCEvent(
-            event_key="2024noschedule",
+            event_key=event_key,
             event_name="No Schedule Event",
             short_name="NoSchedule",
             year=2024,
@@ -80,3 +82,63 @@ def test_public_match_schedule_returns_empty_list_when_no_matches(setup_database
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_public_match_schedule_fetches_adhoc_when_db_empty(monkeypatch, setup_database):
+    event = asyncio.run(_prepare_event_without_schedule("2024noscheduleadhoc"))
+
+    class _FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+        @staticmethod
+        def json() -> list[dict[str, Any]]:
+            return [
+                {
+                    "comp_level": "qm",
+                    "match_number": 1,
+                    "alliances": {
+                        "red": {"team_keys": ["frc111", "frc222", "frc333"]},
+                        "blue": {"team_keys": ["frc444", "frc555", "frc666"]},
+                    },
+                }
+            ]
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url: str, headers: dict[str, str]):
+            assert url.endswith(f"/event/{event.event_key}/matches/simple")
+            assert "X-TBA-Auth-Key" in headers
+            return _FakeResponse()
+
+    monkeypatch.setattr(event_service, "TBA_API_KEY", "test-api-key")
+    monkeypatch.setattr(event_service.httpx, "AsyncClient", _FakeAsyncClient)
+
+    with TestClient(app) as client:
+        response = client.get(f"/public/matchSchedule/{event.event_key}")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "event_key": event.event_key,
+            "match_number": 1,
+            "match_level": "qm",
+            "red1_id": 111,
+            "red2_id": 222,
+            "red3_id": 333,
+            "blue1_id": 444,
+            "blue2_id": 555,
+            "blue3_id": 666,
+        }
+    ]

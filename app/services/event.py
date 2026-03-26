@@ -265,7 +265,92 @@ async def get_match_schedule(
 ) -> List[MatchScheduleResponse]:
     statement = select(MatchSchedule).where(MatchSchedule.event_key == eventCode)
     result = await session.execute(statement)
-    return result.scalars().all()
+    matches = result.scalars().all()
+    if matches:
+        return matches
+
+    await _refresh_match_schedule_from_tba(session, eventCode)
+
+    refreshed_result = await session.execute(statement)
+    return refreshed_result.scalars().all()
+
+
+async def _refresh_match_schedule_from_tba(
+    session: AsyncSession, event_code: str
+) -> None:
+    if not TBA_API_KEY:
+        return
+
+    matches_url = f"{TBA_API_ENDPOINT}/event/{event_code}/matches/simple"
+    headers = {"X-TBA-Auth-Key": TBA_API_KEY, "accept": "application/json"}
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(matches_url, headers=headers)
+        response.raise_for_status()
+    except httpx.HTTPError:
+        return
+
+    payload = response.json()
+    if not isinstance(payload, list):
+        return
+
+    has_new_records = False
+    for match in payload:
+        alliances = match.get("alliances")
+        if not isinstance(alliances, dict):
+            continue
+
+        match_level = str(match.get("comp_level") or "").strip()
+        if not match_level:
+            continue
+
+        if match_level == "sf":
+            match_number_raw = match.get("set_number")
+        else:
+            match_number_raw = match.get("match_number")
+
+        try:
+            match_number = int(match_number_raw)
+        except (TypeError, ValueError):
+            continue
+
+        red_alliance = alliances.get("red")
+        blue_alliance = alliances.get("blue")
+        if not isinstance(red_alliance, dict) or not isinstance(blue_alliance, dict):
+            continue
+
+        red_team_numbers = _parse_team_numbers(red_alliance.get("team_keys") or [])
+        blue_team_numbers = _parse_team_numbers(blue_alliance.get("team_keys") or [])
+        if len(red_team_numbers) < 3 or len(blue_team_numbers) < 3:
+            continue
+
+        statement = select(MatchSchedule).where(
+            MatchSchedule.event_key == event_code,
+            MatchSchedule.match_number == match_number,
+            MatchSchedule.match_level == match_level,
+        )
+        existing = (await session.execute(statement)).scalar_one_or_none()
+        if existing is not None:
+            continue
+
+        has_new_records = True
+        session.add(
+            MatchSchedule(
+                event_key=event_code,
+                match_number=match_number,
+                match_level=match_level,
+                red1_id=red_team_numbers[0],
+                red2_id=red_team_numbers[1],
+                red3_id=red_team_numbers[2],
+                blue1_id=blue_team_numbers[0],
+                blue2_id=blue_team_numbers[1],
+                blue3_id=blue_team_numbers[2],
+            )
+        )
+
+    if has_new_records:
+        await session.commit()
 
 
 async def get_match_schedule_or_404(session: AsyncSession, eventCode: str) -> List[MatchScheduleResponse]:

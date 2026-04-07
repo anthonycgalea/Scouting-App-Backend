@@ -24,7 +24,7 @@ from app.models import (
     UserRole,
     ValidationStatus,
 )
-from app.services.event import get_scouting_alliance_organization_ids
+from app.services.event import get_match_preview, get_scouting_alliance_organization_ids
 from app.services.match_prediction import get_match_prediction_for_user_organization
 from app.services.scout import (
     DataValidationFilterRequest,
@@ -235,6 +235,53 @@ async def test_superscout_access_includes_allied_data(setup_database):
         alliance_info = alliances[0]["alliances"]
         assert alliance_info["red"] is True
         assert alliance_info["blue"] is False
+
+
+@pytest.mark.asyncio
+async def test_match_preview_includes_allied_compiled_averages(setup_database):
+    context = await _create_alliance_context("2025alliancepreview", 9302)
+
+    async with AsyncSessionLocal() as session:
+        teams = [
+            TeamRecord(teamNumber=number, teamName=f"Team {number}")
+            for number in range(6101, 6107)
+        ]
+        session.add_all(teams)
+        await session.commit()
+
+        schedule = MatchSchedule(
+            event_key=context["event_key"],
+            match_number=3,
+            match_level="qm",
+            red1_id=6101,
+            red2_id=6102,
+            red3_id=6103,
+            blue1_id=6104,
+            blue2_id=6105,
+            blue3_id=6106,
+        )
+
+        allied_record = MatchData2025(
+            season=context["season_id"],
+            team_number=6101,
+            event_key=context["event_key"],
+            match_number=1,
+            match_level="qm",
+            user_id=context["allied_user_id"],
+            organization_id=context["allied_organization_id"],
+            autoL4=2,
+        )
+        session.add_all([schedule, allied_record])
+        await session.commit()
+
+        user_payload = {
+            "id": str(context["primary_user_id"]),
+            "user_org": context["primary_membership_id"],
+        }
+
+        preview = await get_match_preview(session, user_payload, 3, "qm")
+        red_team_preview = next(team for team in preview.red.teams if team.team_number == 6101)
+        assert red_team_preview.auto.level4.average == pytest.approx(2.0)
 
 
 @pytest.mark.asyncio

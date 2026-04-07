@@ -984,12 +984,15 @@ async def _fetch_team_records(
     session: AsyncSession,
     match_model: type[SQLModel],
     event_key: str,
-    organization_id: int,
+    organization_ids: Sequence[int],
     team_number: int,
 ) -> List[SQLModel]:
+    if not organization_ids:
+        return []
+
     statement = select(match_model).where(
         match_model.event_key == event_key,
-        match_model.organization_id == organization_id,
+        match_model.organization_id.in_(tuple(int(org_id) for org_id in organization_ids)),
         match_model.team_number == team_number,
     )
     result = await session.execute(statement)
@@ -1000,7 +1003,7 @@ async def _build_alliance_preview(
     session: AsyncSession,
     match_model: type[SQLModel],
     event_key: str,
-    organization_id: int,
+    organization_ids: Sequence[int],
     team_numbers: Sequence[int],
     auto_weights: Dict[str, float],
     teleop_weights: Dict[str, float],
@@ -1015,7 +1018,7 @@ async def _build_alliance_preview(
             session,
             match_model,
             event_key,
-            organization_id,
+            organization_ids,
             int(team_number),
         )
         team_preview, counts_average = _build_team_preview_from_records(
@@ -1063,6 +1066,13 @@ async def get_match_preview(
     endgame_points = resolve_endgame_points_mapping(match_model, MATCH_MODEL_ENDGAME_POINTS_ATTR, DEFAULT_ENDGAME_POINTS)
 
     include_levels = season.id != 2
+    alliance_organization_ids = tuple(
+        sorted(
+            await get_scouting_alliance_organization_ids(
+                session, event_key, membership.organization_id
+            )
+        )
+    )
 
     red_teams = [match.red1_id, match.red2_id, match.red3_id]
     blue_teams = [match.blue1_id, match.blue2_id, match.blue3_id]
@@ -1071,7 +1081,7 @@ async def get_match_preview(
         session,
         match_model,
         event_key,
-        membership.organization_id,
+        alliance_organization_ids,
         red_teams,
         auto_weights,
         teleop_weights,
@@ -1083,7 +1093,7 @@ async def get_match_preview(
         session,
         match_model,
         event_key,
-        membership.organization_id,
+        alliance_organization_ids,
         blue_teams,
         auto_weights,
         teleop_weights,
